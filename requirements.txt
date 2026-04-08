@@ -1,0 +1,10 @@
+# Core — choose your engine
+playwright>=1.44
+selenium>=4.20
+webdriver-manager>=4.0
+pyppeteer>=2.0
+
+# CAPTCHA solving (2captcha.com)
+2captcha-python>=1.5
+
+# Utilities
