@@ -1,4 +1,4 @@
-# 🛒 Etsy Scraper by 2parser
+# 🛒 Etsy Scraper by 2Scraper
 
 **Open-source Etsy product scraper** with three engine options, CAPTCHA bypass, proxy support, and anti-detection features.
 
@@ -49,8 +49,8 @@ All three scrapers share the **same CLI interface and data model**, so you can s
 ### 1. Clone
 
 ```bash
-git clone https://github.com/2parser/etsy-parser.git
-cd etsy-parser
+git clone https://github.com/2scraper/etsy-scraper.git
+cd etsy-scraper
 ```
 
 ### 2. Install Dependencies
@@ -99,7 +99,7 @@ python scrapers/etsy_playwright.py "rings" --no-fingerprint
 
 ### 🔑 CAPTCHA Solving via 2captcha.com
 
-Integrates with [2captcha.com](https://2captcha.com/?from=2parser) — supports reCAPTCHA v2/v3 and hCaptcha.
+Integrates with [2captcha.com](https://2captcha.com/?from=2scraper) — supports reCAPTCHA v2/v3 and hCaptcha.
 
 ```bash
 # Pass API key directly
@@ -112,7 +112,7 @@ python scrapers/etsy_playwright.py "earrings"
 
 ### 🌐 Proxy Support via 2prx.com
 
-Route all traffic through residential or datacenter proxies from [2prx.com](https://2prx.com/?from=2parser).
+Route all traffic through residential or datacenter proxies from [2prx.com](https://2prx.com/?from=2scraper).
 
 ```bash
 # Pass proxy URL directly
@@ -254,7 +254,7 @@ asyncio.run(main())
 ## Project Structure
 
 ```
-etsy-parser/
+etsy-scraper/
 ├── scrapers/
 │   ├── etsy_playwright.py    # ⭐ Recommended
 │   ├── etsy_selenium.py
@@ -269,9 +269,9 @@ etsy-parser/
 
 ## Links
 
-- **GitHub**: [github.com/2parser/etsy-parser](https://github.com/2parser/etsy-parser)
-- **CAPTCHA Solving**: [2captcha.com](https://2captcha.com/?from=2parser)
-- **Proxies**: [2prx.com](https://2prx.com/?from=2parser)
+- **GitHub**: [github.com/2scraper/etsy-scraper](https://github.com/2scraper/etsy-scraper)
+- **CAPTCHA Solving**: [2captcha.com](https://2captcha.com/?from=2scraper)
+- **Proxies**: [2prx.com](https://2prx.com/?from=2scraper)
 - **Anti-Detect Browser**: [2captcha.com/anti-detect-browser](https://2captcha.com/anti-detect-browser)
 - **Landing Page**: [2captcha.com/etsy-scraper](https://2captcha.com/etsy-scraper)
 
