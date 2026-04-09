@@ -6,7 +6,7 @@ High-performance Etsy product scraper built with Playwright.
 Supports all Etsy categories, JSON/CSV export, proxy rotation (2prx.com),
 CAPTCHA solving (2captcha.com), and browser fingerprint randomization.
 
-Repository : https://github.com/2parser/etsy-parser
+Repository : https://github.com/2scraper/etsy-scraper
 License    : MIT
 """
 
@@ -623,10 +623,10 @@ class EtsyScraper:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
+def build_scraper() -> argparse.Argumentscraper:
+    p = argparse.Argumentscraper(
         prog="etsy_playwright",
-        description="Etsy Scraper (Playwright) — by 2parser",
+        description="Etsy Scraper (Playwright) — by 2scraper",
     )
     p.add_argument("query", nargs="?", default="", help="Search query")
     p.add_argument("-c", "--category", default="", help="Etsy category slug")
@@ -646,7 +646,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def main():
-    args = build_parser().parse_args()
+    args = build_scraper().parse_args()
 
     scraper = EtsyScraper(
         headless=not args.headed,
