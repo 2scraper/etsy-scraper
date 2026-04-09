@@ -6,7 +6,7 @@ Etsy product scraper built with Selenium WebDriver.
 Supports all Etsy categories, JSON/CSV export, proxy rotation (2prx.com),
 CAPTCHA solving (2captcha.com), and browser fingerprint randomization.
 
-Repository : https://github.com/2parser/etsy-parser
+Repository : https://github.com/2scraper/etsy-scraper
 License    : MIT
 """
 
@@ -494,10 +494,10 @@ class EtsyScraperSelenium:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
+def build_scraper() -> argparse.Argumentscraper:
+    p = argparse.Argumentscraper(
         prog="etsy_selenium",
-        description="Etsy Scraper (Selenium) — by 2parser",
+        description="Etsy Scraper (Selenium) — by 2scraper",
     )
     p.add_argument("query", nargs="?", default="", help="Search query")
     p.add_argument("-c", "--category", default="")
@@ -517,7 +517,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main():
-    args = build_parser().parse_args()
+    args = build_scraper().parse_args()
 
     scraper = EtsyScraperSelenium(
         headless=not args.headed,
