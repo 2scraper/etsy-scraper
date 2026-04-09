@@ -6,7 +6,7 @@ Etsy product scraper built with Pyppeteer — the Python port of Puppeteer.
 Supports all Etsy categories, JSON/CSV export, proxy rotation (2prx.com),
 CAPTCHA solving (2captcha.com), and browser fingerprint randomization.
 
-Repository : https://github.com/2parser/etsy-parser
+Repository : https://github.com/2scraper/etsy-scraper
 License    : MIT
 """
 
@@ -501,10 +501,10 @@ class EtsyScraperPyppeteer:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
+def build_scraper() -> argparse.Argumentscraper:
+    p = argparse.Argumentscraper(
         prog="etsy_pyppeteer",
-        description="Etsy Scraper (Pyppeteer / Puppeteer) — by 2parser",
+        description="Etsy Scraper (Pyppeteer / Puppeteer) — by 2scraper",
     )
     p.add_argument("query", nargs="?", default="", help="Search query")
     p.add_argument("-c", "--category", default="")
@@ -524,7 +524,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def main():
-    args = build_parser().parse_args()
+    args = build_scraper().parse_args()
 
     scraper = EtsyScraperPyppeteer(
         headless=not args.headed,
