@@ -42,12 +42,38 @@ jobs:
         with:
           fetch-depth: 1
 
+      # Installed here, from the STABLE channel, instead of letting the action
+      # fetch `latest` for itself — the same fix its twin
+      # (claude-code-review.yml) already carries, and for the same reason. On
+      # 2026-09-08 `latest` left no binary where the action looks and every
+      # run died with:
+      #     Claude Code native binary not found at /home/runner/.local/bin/claude
+      #
+      # This file did NOT have the fix while its twin did, which is the shape
+      # of drift that makes one of a pair of workflows red for a reason
+      # nobody can see in the other.
+      #
+      # Remove both this step and path_to_claude_code_executable once `latest`
+      # installs correctly again.
+      - name: Install Claude Code (stable channel)
+        if: env.HAS_CLAUDE_TOKEN == 'true'
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash -s stable
+          "$HOME/.local/bin/claude" --version
+          # Through GITHUB_ENV, not `${{ env.HOME }}`: HOME is a runner
+          # variable and is not in the workflow `env` context, so the
+          # expression form expands to an empty string and the action falls
+          # back to installing `latest` — the very thing this step exists to
+          # avoid, and silently.
+          echo "CLAUDE_BIN=$HOME/.local/bin/claude" >> "$GITHUB_ENV"
+
       - name: Run Claude Code
         id: claude
         if: env.HAS_CLAUDE_TOKEN == 'true'
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          path_to_claude_code_executable: ${{ env.CLAUDE_BIN }}
 
           # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |

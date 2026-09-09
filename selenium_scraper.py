@@ -59,10 +59,12 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from captcha_solver import (detect_recaptcha_v3, detect_recaptcha_in_page,
                             reconcile_detections, solve_recaptcha,
-                            INJECT_TOKEN_JS)
+                            solve_datadome, CaptchaUnsolvable,
+                            DataDomeChallenge, INJECT_TOKEN_JS)
 from product_parser import (parse_products, parse_product_page,
                             shop_metadata, SELECTORS, detect_bot_challenge,
-                            datadome_verdict, page_url, listing_kind,
+                            datadome_verdict, datadome_captcha_url,
+                            page_url, listing_kind,
                             site_host, is_supported_host, total_results,
                             unsupported_reason)
 from output_writer import dedupe_by_key, finish_run, EXIT_API_ERROR
@@ -358,6 +360,47 @@ def _same_url(a: str, b: str) -> bool:
     return page_flow.comparable(a) == page_flow.comparable(b)
 
 
+def _frame_urls(session) -> List[str]:
+    """Every frame's CURRENT url, which is not what the markup says.
+
+    The one primitive that makes the DataDome hand-off visible: a challenge
+    moves from the device check to its solvable slider by navigating this
+    iframe, and neither the `dd` object nor the iframe's `src` attribute in
+    the top-level document follows. Measured: the markup said `rt='i'` for
+    120 seconds while this list said `t=fe` from second seven.
+
+    Never raises — a frame can detach between the enumeration and the read,
+    and losing the whole list to that would put the run back where it
+    started.
+
+    Selenium has no "list the frames' URLs" call: `driver.current_url` stays
+    on the top document however many frames you switch into. So this switches
+    into each iframe, asks IT where it is, and switches back — and the switch
+    back is in a `finally`, because leaving the driver parked inside a frame
+    would make every later `find_element` search the wrong document.
+    """
+    driver = session.driver
+    urls = []
+    try:
+        frames = driver.find_elements(By.TAG_NAME, "iframe")
+    except WebDriverException:
+        return []
+    for frame in frames:
+        try:
+            driver.switch_to.frame(frame)
+            got = driver.execute_script("return window.location.href;")
+            if got:
+                urls.append(got)
+        except WebDriverException:
+            continue
+        finally:
+            try:
+                driver.switch_to.default_content()
+            except WebDriverException:
+                pass
+    return urls
+
+
 def _next_page_candidates(session, page_num: int) -> List[str]:
     """The site's own next-page link, resolved by the browser, or None.
 
@@ -383,6 +426,76 @@ def _next_page_candidates(session, page_num: int) -> List[str]:
         return []
     return page_flow.next_page_candidates(session.driver.current_url,
                                           hrefs or [])
+
+
+def handle_datadome_if_present(session, args, html: str) -> bool:
+    """Buy a DataDome solve when — and only when — one can work. True if solved.
+
+    Mirrors playwright_scraper.handle_datadome_if_present exactly: the
+    preconditions, their order, the purchase cap and the reload are the same,
+    because all three engines must agree on when a run spends money. What
+    differs is only how this driver reads its user agent and sets a cookie.
+    """
+    driver = session.driver
+    frame_urls = _frame_urls(session)
+    verdict = datadome_verdict(html, frame_urls)
+    solve_mode = getattr(args, "solve_captcha", "when-blocked")
+    if not page_flow.should_pay_for(verdict, solve_mode):
+        if verdict == "fe" and args.twocaptcha_key:
+            # Worth saying out loud: the one solvable state on this site is
+            # in front of us, a key is configured, and the run is still not
+            # spending. Silence here would read as "nothing to solve".
+            logger.info(
+                "A solvable DataDome challenge (t=fe) is on this page and "
+                "was NOT paid for: on this site the solve is opt-in, because "
+                "two of two purchases were measured returning cookies Etsy "
+                "rejected. Pass --solve-captcha always to try it anyway.")
+        return False
+
+    captcha_url = datadome_captcha_url(html, frame_urls)
+    if not captcha_url:
+        logger.warning("DataDome reports a solvable challenge (t=fe) but its "
+                       "iframe carries no src to hand to the solver — not "
+                       "paying for a task that cannot be scoped.")
+        return False
+    if not args.twocaptcha_key:
+        logger.warning("A SOLVABLE DataDome challenge (t=fe) is on this page "
+                       "and no 2captcha key is configured — continuing with "
+                       "whatever the page holds.")
+        return False
+
+    challenge = DataDomeChallenge(
+        captcha_url=captcha_url, page_url=driver.current_url,
+        # A function BODY with an explicit return, not an arrow expression —
+        # the dialect difference that keeps JavaScript out of page_flow.
+        user_agent=driver.execute_script("return navigator.userAgent;"))
+    try:
+        name, value = solve_datadome(challenge, args.twocaptcha_key,
+                                     args.proxy, attempts=2)
+    except CaptchaUnsolvable as e:
+        logger.warning("DataDome will not solve from this exit: %s", e)
+        return False
+    except Exception as e:  # noqa: BLE001 — a solver failure is not a crash
+        logger.error("The DataDome solve failed (%s) — continuing with "
+                     "whatever the page holds.", e)
+        return False
+
+    try:
+        # Selenium refuses a cookie whose domain does not match the page the
+        # driver is currently on, so this has to happen after a navigation to
+        # the site — which it always is, since it is reached from a fetch.
+        driver.add_cookie({
+            "name": name, "value": value,
+            "domain": page_flow.datadome_cookie_domain(driver.current_url),
+            "path": "/",
+        })
+    except WebDriverException as e:
+        logger.error("Selenium refused the solved cookie (%s) — the solve is "
+                     "paid for but cannot be used.", e)
+        return False
+    logger.info("DataDome cookie set; reloading to use it.")
+    driver.refresh()
+    return True
 
 
 def handle_captcha_if_present(session, args) -> bool:
@@ -458,6 +571,10 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     has_pool = bool(pool and len(pool) > 1)
     block_retries = (args.proxy_block_retries if has_pool
                      else page_flow.BLOCK_RETRIES_WITHOUT_POOL)
+    # Counted across the whole block-retry loop, not per attempt: a page that
+    # keeps coming back as a challenge would otherwise buy one solve per
+    # rotation, which is how a run quietly turns into a bill.
+    solves_bought = 0
 
     for block_attempt in range(block_retries + 1):
         logger.info("Fetching page %d/%d: %s", page_num, args.pages, url)
@@ -499,8 +616,38 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         html = d["content"]() or ""
         # A DataDome interstitial has not decided yet — wait it out before
         # classifying, exactly as the other two engines do.
-        html = page_flow.settle_datadome(d["content"], d["sleep"]) or html
-        state = page_flow.classify(html, url=d["current_url"]())
+        html = page_flow.settle_datadome(
+            d["content"], d["sleep"],
+            frames=lambda: _frame_urls(session)) or html
+        state = page_flow.classify(html, url=d["current_url"](),
+                                   frame_urls=_frame_urls(session))
+
+        # The paid path, and the only state that reaches it. `should_solve` is
+        # True for "captcha" and False for "blocked", which is where the
+        # t=fe / t=bv distinction turns into a decision about money.
+        if (page_flow.should_solve(state)
+                and solves_bought < page_flow.SOLVES_PER_PAGE):
+            solves_bought += 1
+            if handle_datadome_if_present(session, args, html):
+                html = d["content"]() or html
+                state = page_flow.classify(html, url=d["current_url"](),
+                                           frame_urls=_frame_urls(session))
+                # The VERIFIED outcome, and the only one worth reporting: a
+                # "ready" task result is not evidence the cookie works (one
+                # was measured coming back ready, and billed, for a
+                # fabricated challenge URL). This line is what says whether
+                # the money bought anything.
+                if state == "content":
+                    logger.info("The solved cookie was accepted — page %d is "
+                                "content now.", page_num)
+                else:
+                    logger.warning(
+                        "The solved cookie was NOT accepted: page %d is still "
+                        "%s. The purchase is spent. On this site that usually "
+                        "means the solve left from a different exit than the "
+                        "browser — a sticky-session proxy whose exit is keyed "
+                        "to the client cannot share one with 2captcha's "
+                        "servers.", page_num, state)
 
 
         if not page_flow.should_retry(state):
@@ -907,7 +1054,16 @@ def parse_args():
                         "your proxy's exit country.")
     p.add_argument("--captcha-api", choices=["v2", "v1"], default="v2")
     p.add_argument("--solve-captcha", choices=["when-blocked", "always"],
-                   default="when-blocked")
+                   default="when-blocked",
+                   help="when-blocked (default): only pay to solve a "
+                        "reCAPTCHA if the content is not already readable. "
+                        "always: solve whenever one is detected, AND opt in "
+                        "to the DataDome solve — which needs `always` because "
+                        "it was measured 0 for 2 (both purchases returned "
+                        "cookies Etsy rejected), and needs --proxy because "
+                        "the cookie is bound to the exit that solved it. "
+                        "Neither setting touches a t=bv refusal: it carries "
+                        "no challenge, so nothing is attempted or billed.")
     p.add_argument("--min-score", type=float, default=0.7)
     p.add_argument("--cdp-endpoint", default=None,
                    help="Attach to a running browser at host:port. Must NOT "
