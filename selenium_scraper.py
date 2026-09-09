@@ -114,6 +114,12 @@ class PageOutcome:
     load_failed: bool = False
     state: Optional[str] = None
     total_available: Optional[int] = None
+    # In --mode shop, the seller's own name/location/rating, read off page 1.
+    # Stored as the small dict rather than by keeping the page's HTML around:
+    # a shop front is 790 KB and a listing page 2.4 MB, and holding those for
+    # the length of a run to re-read six fields at the end would cost more
+    # memory than the whole result set.
+    shop_facts: Optional[dict] = None
 
     @property
     def ok(self) -> bool:
@@ -554,12 +560,24 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 lambda _: d["count"](selector) > threshold)
             time.sleep(0.5)
         except TimeoutException:
-            # Not an error on its own: a hub category renders no cards and
-            # never will, and one page past the end of a listing is the same.
-            logger.info("No product cards appeared within %.0fs. If this URL "
-                        "is a hub category rather than a product grid, that "
-                        "is the expected answer and the run will report 0 "
-                        "rows (exit 4).", timeout_s)
+            # Not an error on its own, and what it MEANS depends on the
+            # mode — which is why the message does too. A listing page with
+            # no grid is a correct answer (a taxonomy hub, or one page past
+            # the end); a detail page whose buy box never painted is a
+            # different thing entirely, and on this site it is usually just
+            # slow rather than absent, because the row is parsed out of the
+            # page's JSON-LD and not out of the buy box.
+            if args.mode == "product":
+                logger.info("The buy box did not paint within %.0fs. That is "
+                            "not fatal: a detail row is read from the page's "
+                            "structured data, and the parse below decides. If "
+                            "it returns nothing, the listing is probably "
+                            "unavailable — the parser will say so.", timeout_s)
+            else:
+                logger.info("No listing tiles appeared within %.0fs. If this "
+                            "URL is a taxonomy hub or one page past the end "
+                            "of a listing, that is the expected answer and "
+                            "the run will report 0 rows (exit 4).", timeout_s)
         html = d["content"]() or html
 
     if args.dump_html:
@@ -593,6 +611,9 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     final_url = d["current_url"]() or url
     products = _parse_for_mode(html, final_url, args)
     logger.info("Parsed %d row(s) from page %d.", len(products), page_num)
+
+    if args.mode == "shop" and page_num == 1:
+        outcome.shop_facts = shop_metadata(html, d["current_url"]())
 
     if args.mode in ("listing", "shop") and page_num == 1:
         # Etsy publishes its own result-set size in the listing's JSON-LD,
@@ -809,12 +830,29 @@ def scrape(args) -> int:
     final_url = (max(ok_pages, key=lambda o: o.page_num).final_url
                  if ok_pages else args.url)
 
+    # A shop run's own facts. Read from page 1's markup, because that is the
+    # page that carries the seller's `Organization` data, and put in the
+    # sidecar rather than repeated down a column — see run_meta's `extra`.
+    extra = None
+    if args.mode == "shop":
+        first = next((o for o in outcomes if o.ok and o.shop_facts), None)
+        if first is not None:
+            extra = first.shop_facts
+            if extra:
+                logger.info("Shop: %s%s, rating %s from %s review(s).",
+                            extra.get("shop_name") or "?",
+                            " (%s)" % extra["shop_location"]
+                            if extra.get("shop_location") else "",
+                            extra.get("shop_rating"),
+                            extra.get("shop_review_count"))
+
     return finish_run(all_rows, args.out, args.format, args.allow_empty,
                       blocked=blocked, stop_reason=stop_reason,
                       pages_requested=args.pages, pages_completed=len(ok_pages),
                       pages_failed=failed_pages, mode=args.mode,
                       source=site_host(final_url),
-                      start_url=args.url, final_url=final_url)
+                      start_url=args.url, final_url=final_url,
+                      extra=extra)
 
 
 def parse_args():

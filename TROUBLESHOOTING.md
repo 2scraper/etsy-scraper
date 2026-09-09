@@ -237,6 +237,37 @@ larger `--delay`.
 
 ---
 
+## pyppeteer prints a traceback AFTER a successful run
+
+Looks like this, after the output has already been written:
+
+```
+[+] Saved 74 products -> shop.json
+[+] Wrote run metadata -> shop.meta.json (status=complete)
+Exception ignored in: <coroutine object Connection._recv_loop at 0x...>
+...
+RuntimeError: Event loop is closed
+```
+
+**The run succeeded.** Check the exit code — it is 0 — and check the output
+files, which are already on disk. This is pyppeteer's websocket coroutine
+being collected at interpreter shutdown, printed by CPython's own garbage
+collector rather than by anything in this repo.
+
+Everything that CAN be suppressed is: the engine cancels pyppeteer's pending
+tasks before stopping its loop, and its loop exception handler swallows the
+teardown messages (`Target closed`, `Connection closed`, `Task was destroyed
+but it is pending`, `No session with given id`). After those, ERROR-level
+output on a successful run is zero. What is left arrives after the loop is
+gone and after the exit code is decided, so nothing in the process is still
+listening — suppressing it would mean installing a global unraisable-exception
+hook, which would also swallow real bugs. That trade is worse than the noise.
+
+`playwright_scraper.py` does not do this, and it is the recommended engine on
+this site anyway.
+
+---
+
 ## `pip check` complains after installing two engines
 
 Expected. playwright and pyppeteer pin incompatible `pyee` versions, and

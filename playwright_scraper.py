@@ -827,14 +827,26 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 timeout=content_timeout)
             session.page.wait_for_timeout(500)
         except PWTimeout:
-            # Not an error on its own. A hub category renders no cards and
-            # never will, and one page past the end of a listing is the same:
-            # both are correct answers that this wait cannot distinguish from
-            # a slow paint, so it times out and the parse decides.
-            logger.info("No product cards appeared within %.0fs. If this URL "
-                        "is a hub category rather than a product grid, that "
-                        "is the expected answer and the run will report 0 "
-                        "rows (exit 4).", content_timeout / 1000)
+            # Not an error on its own, and what it MEANS depends on the
+            # mode — which is why the message does too. A listing page with
+            # no grid is a correct answer (a taxonomy hub, or one page past
+            # the end); a detail page whose buy box never painted is a
+            # different thing entirely, and on this site it is usually just
+            # slow rather than absent, because the row is parsed out of the
+            # page's JSON-LD and not out of the buy box.
+            if args.mode == "product":
+                logger.info("The buy box did not paint within %.0fs. That is "
+                            "not fatal: a detail row is read from the page's "
+                            "structured data, and the parse below decides. If "
+                            "it returns nothing, the listing is probably "
+                            "unavailable — the parser will say so.",
+                            content_timeout / 1000)
+            else:
+                logger.info("No listing tiles appeared within %.0fs. If this "
+                            "URL is a taxonomy hub or one page past the end of "
+                            "a listing, that is the expected answer and the "
+                            "run will report 0 rows (exit 4).",
+                            content_timeout / 1000)
 
         html = _content_when_settled(session.page) or html
 

@@ -198,10 +198,32 @@ python3 playwright_scraper.py --mode shop \
     --url "https://www.etsy.com/shop/StonehousePotteryOH" --pages 3
 ```
 
-The other two engines take the same flags: `selenium_scraper.py`,
-`puppeteer_scraper.py`. A fourth, browserless client
-(`scraper_api_client.py`) fetches through the 2Captcha Scraper API with no
-local browser at all — but see the access table above: Etsy refused it.
+### Which engine can actually reach Etsy
+
+All three take the same flags, but on THIS site they are not interchangeable
+in practice, and that follows from the access table above rather than from
+anything about the code.
+
+| engine | reaches Etsy? | why |
+|---|---|---|
+| **`playwright_scraper.py`** | **yes** | authenticates a Scraping Browser endpoint on the WebSocket upgrade. Verified live: 184 rows over 3 pages |
+| **`puppeteer_scraper.py`** | **yes** | same, via `browserWSEndpoint`. Verified live: 123 rows over 2 pages, 100% priced |
+| `selenium_scraper.py` | **not with a credentialed endpoint** | chromedriver's `debuggerAddress` is a bare `host:port` with nowhere to put a password, so it cannot use the Scraping Browser API — and `--proxy-server` cannot authenticate a proxy either. It refuses up front with that reason rather than failing somewhere further in |
+| `scraper_api_client.py` | no | browserless, and its own exit is a datacentre address. Measured: upstream HTTP 403 |
+
+So Selenium is here for parity of behaviour — it makes the same decisions,
+reports the same exit codes and is checked by the same suite — but on a site
+whose only working access path is an authenticated remote browser, it has no
+way in. If you need Selenium specifically, you need an Etsy that accepts a
+local browser from your address, and this repo's own measurements say not to
+count on that.
+
+The two working engines were cross-checked against each other on 121 listings
+they both saw: three fields differed, all three on rows where the live page
+had moved between the runs (Etsy converts prices at a live rate, and ad
+placement varies per impression). They share one parser, so a parsing
+difference between them is not possible by construction — what the comparison
+verifies is that both browsers reach the same content.
 
 ### Modes
 

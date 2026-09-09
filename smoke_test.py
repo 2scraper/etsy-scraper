@@ -2327,9 +2327,11 @@ def test_engines(skips):
                         "a ws://user:pass@h:1/ b ws://user:pass@h:1/"))
         ok &= check("%s refuses a host that is not Etsy" % name,
                     "is_supported_host" in src)
-        # Both modes, and only both.
-        ok &= check("%s offers exactly the listing and product modes" % name,
-                    '"listing", "product"' in src)
+        # All three modes, and the same three in every engine — a mode one
+        # engine offers and another does not is the drift page_flow.py and
+        # finish_run() exist to prevent, one level up.
+        ok &= check("%s offers exactly the listing, product and shop modes" % name,
+                    '"listing", "product", "shop"' in src)
 
     # For "it must pass with no engine installed" to mean anything, each
     # engine has to import its driver at MODULE level — otherwise the module
@@ -2361,6 +2363,68 @@ def test_engines(skips):
 # ---------------------------------------------------------------------------
 # Repository hygiene
 # ---------------------------------------------------------------------------
+def test_pyppeteer_teardown_noise():
+    group("pyppeteer teardown noise is suppressed, and its limit is pinned")
+    ok = True
+    try:
+        import puppeteer_scraper as pyp
+    except ImportError:
+        return check("pyppeteer engine present (skipped: library absent)", True)
+
+    handler = pyp._AsyncBridge._on_loop_exception.__func__ if hasattr(
+        pyp._AsyncBridge._on_loop_exception, "__func__") else pyp._AsyncBridge._on_loop_exception
+
+    class _Loop:
+        def __init__(self): self.passed_through = []
+        def default_exception_handler(self, context):
+            self.passed_through.append(context)
+
+    # Each of these arrives on a run that SUCCEEDED, after the output is
+    # written, and four tracebacks under a healthy run is how a reader learns
+    # to ignore the log.
+    swallowed = [
+        {"message": "Task was destroyed but it is pending"},
+        {"message": "Future exception was never retrieved",
+         "exception": RuntimeError("Protocol error (Target.sendMessageToTarget): "
+                                   "No session with given id")},
+        {"exception": RuntimeError("Target closed")},
+        {"exception": RuntimeError("Connection closed")},
+        {"message": "Event loop is closed"},
+    ]
+    for context in swallowed:
+        loop = _Loop()
+        handler(loop, context)
+        label = (context.get("message") or str(context.get("exception")))[:44]
+        ok &= check("teardown noise suppressed: %s" % label,
+                    not loop.passed_through)
+
+    # A REAL error must still get through, or the suppression has become a
+    # blindfold.
+    loop = _Loop()
+    handler(loop, {"exception": ValueError("something actually went wrong")})
+    ok &= check("a real exception is NOT swallowed", len(loop.passed_through) == 1)
+
+    # The handler reads BOTH fields. It used to read `exception or message`,
+    # which meant a context carrying both never had its message inspected —
+    # so the asyncio-worded ones kept printing after they were "handled".
+    src = inspect.getsource(handler)
+    ok &= check("the handler inspects the message as well as the exception",
+                'for k in ("exception", "message")' in src)
+
+    # PINNED LIMITATION, not a guard: `Exception ignored in: <coroutine
+    # object Connection._recv_loop>` is printed by CPython's garbage
+    # collector at interpreter shutdown, after the loop is gone and after the
+    # exit code is decided. No loop handler can reach it, and catching it
+    # would mean a global unraisable hook that swallows real bugs too. It is
+    # documented in TROUBLESHOOTING.md instead; this check makes sure that
+    # documentation stays there.
+    doc = open(os.path.join(REPO_ROOT, "TROUBLESHOOTING.md"),
+               encoding="utf-8").read()
+    ok &= check("the shutdown-time traceback is documented rather than hidden",
+                "Exception ignored in" in doc and "The run succeeded" in doc)
+    return ok
+
+
 def test_no_capture_leaks():
     group("no credentials or personal data in the committed fixtures")
     ok = True
@@ -2921,6 +2985,7 @@ def main() -> int:
     ok &= test_env_config()
     ok &= test_proxy_pool()
     ok &= test_engines(skips)
+    ok &= test_pyppeteer_teardown_noise()
     ok &= test_no_capture_leaks()
     ok &= test_wording()
     ok &= test_fingerprint_application()

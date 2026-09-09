@@ -132,8 +132,26 @@ class _AsyncBridge:
 
     @staticmethod
     def _on_loop_exception(loop, context):
-        message = str(context.get("exception") or context.get("message") or "")
-        if "Target closed" in message or "Connection closed" in message:
+        # BOTH, not one or the other. asyncio puts its own words in
+        # `message` ("Future exception was never retrieved") and the library's
+        # in `exception` (a NetworkError about a closed CDP session), and an
+        # `or` between them looks at the exception and never sees the message
+        # — which is why these kept printing after they were "handled".
+        message = " | ".join(
+            str(context.get(k)) for k in ("exception", "message")
+            if context.get(k))
+        if any(m in message for m in (
+                "Target closed", "Connection closed",
+                # asyncio's own words when the loop stops with work in
+                # flight. Emitted after a successful run; see close().
+                "Task was destroyed but it is pending",
+                "Future exception was never retrieved",
+                # A CDP message addressed to a session that has gone away.
+                # On this site that is routine rather than exceptional: a
+                # DataDome interstitial resolves by NAVIGATING, which takes
+                # the old target with it while a call is still in flight.
+                "No session with given id",
+                "Event loop is closed")):
             logger.debug("Ignoring teardown noise from pyppeteer: %s", message)
             return
         loop.default_exception_handler(context)
@@ -148,7 +166,29 @@ class _AsyncBridge:
                 f"pyppeteer call did not return within {timeout}s")
 
     def close(self):
-        self.loop.call_soon_threadsafe(self.loop.stop)
+        """Stop the loop, CANCELLING whatever it still has in flight.
+
+        Stopping the loop outright leaves pyppeteer's own background tasks
+        pending — its websocket reader and keepalive — and asyncio then prints
+        "Task was destroyed but it is pending!" plus a traceback for each of
+        them. That happens AFTER the output has been written, so the run is
+        fine and the log looks like a crash. Four tracebacks under a
+        successful run is how a reader learns to ignore the log.
+
+        Cancelling first is the fix, and it has to happen ON the loop thread —
+        `call_soon_threadsafe` is what gets it there.
+        """
+        def _cancel_and_stop():
+            pending = [t for t in asyncio.all_tasks(self.loop)
+                       if t is not asyncio.current_task(self.loop)]
+            for task in pending:
+                task.cancel()
+            if pending:
+                logger.debug("Cancelled %d pending pyppeteer task(s) on "
+                             "teardown.", len(pending))
+            self.loop.stop()
+
+        self.loop.call_soon_threadsafe(_cancel_and_stop)
         self._thread.join(timeout=5)
 
 
@@ -163,6 +203,12 @@ class PageOutcome:
     load_failed: bool = False
     state: Optional[str] = None
     total_available: Optional[int] = None
+    # In --mode shop, the seller's own name/location/rating, read off page 1.
+    # Stored as the small dict rather than by keeping the page's HTML around:
+    # a shop front is 790 KB and a listing page 2.4 MB, and holding those for
+    # the length of a run to re-read six fields at the end would cost more
+    # memory than the whole result set.
+    shop_facts: Optional[dict] = None
 
     @property
     def ok(self) -> bool:
@@ -538,12 +584,24 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 {"timeout": page_flow.content_timeout_ms(args.mode)}))
             time.sleep(0.5)
         except Exception:  # noqa: BLE001 — a timeout here is often the right answer
-            # Not an error on its own: a hub category renders no cards and
-            # never will, and one page past the end of a listing is the same.
-            logger.info("No product cards appeared in time. If this URL is a "
-                        "hub category rather than a product grid, that is the "
-                        "expected answer and the run will report 0 rows "
-                        "(exit 4).")
+            # Not an error on its own, and what it MEANS depends on the
+            # mode — which is why the message does too. A listing page with
+            # no grid is a correct answer (a taxonomy hub, or one page past
+            # the end); a detail page whose buy box never painted is a
+            # different thing entirely, and on this site it is usually just
+            # slow rather than absent, because the row is parsed out of the
+            # page's JSON-LD and not out of the buy box.
+            if args.mode == "product":
+                logger.info("The buy box did not paint in time. That is not "
+                            "fatal: a detail row is read from the page's "
+                            "structured data, and the parse below decides. If "
+                            "it returns nothing, the listing is probably "
+                            "unavailable — the parser will say so.")
+            else:
+                logger.info("No listing tiles appeared in time. If this URL "
+                            "is a taxonomy hub or one page past the end of a "
+                            "listing, that is the expected answer and the run "
+                            "will report 0 rows (exit 4).")
         html = d["content"]() or html
 
     if args.dump_html:
@@ -572,6 +630,9 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
 
     products = _parse_for_mode(html, page.url, args)
     logger.info("Parsed %d row(s) from page %d.", len(products), page_num)
+
+    if args.mode == "shop" and page_num == 1:
+        outcome.shop_facts = shop_metadata(html, page.url)
 
     if args.mode in ("listing", "shop") and page_num == 1:
         # Etsy publishes its own result-set size in the listing's JSON-LD,
@@ -802,12 +863,29 @@ def scrape(args) -> int:
     final_url = (max(ok_pages, key=lambda o: o.page_num).final_url
                  if ok_pages else args.url)
 
+    # A shop run's own facts. Read from page 1's markup, because that is the
+    # page that carries the seller's `Organization` data, and put in the
+    # sidecar rather than repeated down a column — see run_meta's `extra`.
+    extra = None
+    if args.mode == "shop":
+        first = next((o for o in outcomes if o.ok and o.shop_facts), None)
+        if first is not None:
+            extra = first.shop_facts
+            if extra:
+                logger.info("Shop: %s%s, rating %s from %s review(s).",
+                            extra.get("shop_name") or "?",
+                            " (%s)" % extra["shop_location"]
+                            if extra.get("shop_location") else "",
+                            extra.get("shop_rating"),
+                            extra.get("shop_review_count"))
+
     return finish_run(all_rows, args.out, args.format, args.allow_empty,
                       blocked=blocked, stop_reason=stop_reason,
                       pages_requested=args.pages, pages_completed=len(ok_pages),
                       pages_failed=failed_pages, mode=args.mode,
                       source=site_host(final_url),
-                      start_url=args.url, final_url=final_url)
+                      start_url=args.url, final_url=final_url,
+                      extra=extra)
 
 
 def parse_args():
