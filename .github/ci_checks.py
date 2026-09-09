@@ -51,9 +51,24 @@ FABRICATION_MARKERS = ("sample-product-", "example brand", "sample product",
 # build red for no reason. It happened on the first run.)
 CREDENTIALLED_URL = re.compile(r"(?:ws|wss|https?)://[^\s\"'/]+:[^\s\"'/]+@")
 
-# Documented placeholders, which are supposed to look like the real thing.
-CREDENTIAL_ALLOWED = ("USER:PASS", "user:pass", "ACCOUNT:PASSWORD", "{login}",
-                      "***", "password}@", "u:p@h", "LOGIN:PASSWORD")
+# Documented placeholders and test values, which are SUPPOSED to look like the
+# real thing — that is the point of them. Each entry earns its place by being
+# in a line whose job is to show the shape of a credential or to prove the
+# masker removes one; a real secret matches none of these.
+#
+# Kept as an explicit list rather than a loose pattern so that adding one is a
+# decision. The alternative — a regex broad enough to cover them all — would
+# also cover a real login.
+CREDENTIAL_ALLOWED = (
+    # documentation placeholders
+    "USER:PASS", "user:pass", "ACCOUNT:PASSWORD", "LOGIN:PASSWORD",
+    "{login}", "{user}", "password}@", "***", "u:p@h",
+    "login:password@host:port",     # the shape a refusal message prints
+    "user:secret@",                 # the proxy-pool masking fixtures
+    "u:supersecret@", "login:supersecret@",   # the redaction fixtures
+    "u:pass@h1", "u:pass@h2",       # the global-masking fixture
+    "only:1",                       # a one-exit pool fixture
+)
 
 # A 2captcha API key is a 32-character hex string.
 HEX32 = re.compile(r"\b[0-9a-f]{32}\b")
@@ -162,7 +177,74 @@ def secret_check():
     return failed
 
 
-CHECKS = {"help": help_check, "sample": sample_check, "secret": secret_check}
+def history_check():
+    """The same rules, applied to every blob that has EVER existed.
+
+    `secret_check` reads the working tree, which is the right scope for CI:
+    it fails a pull request before the mistake lands. This one is for the
+    step CI cannot do anything about — publishing.
+
+    A commit on top cannot reach what a published tag and a merged PR's refs
+    already hold; those stay attached to the PR and cannot be deleted from
+    it. So the decision has to be made BEFORE the repository goes public,
+    and afterwards only a fresh repository removes anything. Run this then:
+
+        python .github/ci_checks.py --history-check
+
+    Deliberately NOT part of `--all` and not run by CI. It shells out to git
+    once per object, which is fine for a hundred and wasteful on every push,
+    and a repo whose history is dirty needs a decision rather than a red
+    check.
+    """
+    try:
+        listing = subprocess.run(["git", "rev-list", "--objects", "--all"],
+                                 cwd=REPO, capture_output=True, text=True,
+                                 check=True).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        return [f"could not read the git history ({e}) — run this inside a "
+                f"clone, not an export"]
+
+    objects = []
+    for line in listing.splitlines():
+        parts = line.split(None, 1)
+        if parts:
+            objects.append((parts[0], parts[1] if len(parts) > 1 else ""))
+
+    failed, scanned = [], 0
+    for sha, path in objects:
+        if not (path.endswith(SCANNED_SUFFIXES) or path in ("Dockerfile",)):
+            continue
+        kind = subprocess.run(["git", "cat-file", "-t", sha], cwd=REPO,
+                              capture_output=True, text=True).stdout.strip()
+        if kind != "blob":
+            continue
+        scanned += 1
+        body = subprocess.run(["git", "cat-file", "blob", sha], cwd=REPO,
+                              capture_output=True, text=True,
+                              errors="replace").stdout
+        for lineno, line in enumerate(body.splitlines(), 1):
+            if CREDENTIALLED_URL.search(line) and not any(
+                    token in line for token in CREDENTIAL_ALLOWED):
+                failed.append(f"{path}:{lineno} (in a past commit) looks like "
+                              f"a URL with real credentials in it")
+            for match in HEX32.findall(line):
+                if any(token in line.lower() for token in HEX32_ALLOWED):
+                    continue
+                failed.append(f"{path}:{lineno} (in a past commit) contains "
+                              f"{match[:6]}… — the shape of a 2captcha key")
+
+    if not failed:
+        print(f"ok       {scanned} blob(s) across {len(objects)} object(s) "
+              f"that have ever existed — nothing credential-shaped")
+    else:
+        print("         NOTE: a later commit cannot remove any of these. A "
+              "published tag and a merged PR's refs keep them, so this needs "
+              "a decision BEFORE the repo goes public.")
+    return failed
+
+
+CHECKS = {"help": help_check, "sample": sample_check,
+          "secret": secret_check, "history": history_check}
 
 
 def main():
@@ -174,11 +256,19 @@ def main():
                         help="sample_output.* exist, are real, match the schema")
     parser.add_argument("--secret-check", action="store_true",
                         help="No credentials committed anywhere")
-    parser.add_argument("--all", action="store_true", help="All of the above")
+    parser.add_argument("--history-check", action="store_true",
+                        help="The same rules over every blob that has EVER "
+                             "existed. For before publishing, not for CI — "
+                             "see history_check(). Not included in --all.")
+    parser.add_argument("--all", action="store_true",
+                        help="help, sample and secret. NOT history: that one "
+                             "is a pre-publication step, and it shells out to "
+                             "git once per object.")
     args = parser.parse_args()
 
     selected = [name for name in CHECKS
-                if args.all or getattr(args, f"{name}_check")]
+                if getattr(args, f"{name}_check")
+                or (args.all and name != "history")]
     if not selected:
         parser.error("pick at least one check, or --all")
 

@@ -465,11 +465,11 @@ def _v2_task_for(challenge: CaptchaChallenge, min_score: float) -> dict:
       * v2 invisible -> RecaptchaV2TaskProxyless with isInvisible: true
       * v2 checkbox  -> RecaptchaV2TaskProxyless
 
-    The `*Proxyless` types let 2captcha use its own IP pool. The non-proxyless
-    variants (RecaptchaV2Task) exist for when the token must be produced from
-    the same IP that will submit it; that needs proxyType/proxyAddress/
-    proxyPort/proxyLogin/proxyPassword and is not wired up here — with the
-    Scraping Browser API the page and the solve already share an exit IP.
+    The `*Proxyless` types let 2captcha use its OWN IP pool, which is the
+    right trade for reCAPTCHA: a v2/v3 token is not bound to the address that
+    produced it, so the solve and the submission may leave from different
+    places. The non-proxyless variants (RecaptchaV2Task) exist for the cases
+    where that is not true, and they are not wired up here.
     """
     if challenge.is_v3:
         # minScore is not free-form: 0.3 / 0.7 / 0.9 are the documented values.

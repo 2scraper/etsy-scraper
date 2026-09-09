@@ -2730,6 +2730,92 @@ def test_pyppeteer_teardown_noise():
     return ok
 
 
+def test_ci_checks_is_actually_wired_up():
+    group("the repo's own checks are RUN, and still catch a real secret")
+    ok = True
+    script = os.path.join(REPO_ROOT, ".github", "ci_checks.py")
+    ok &= check("ci_checks.py exists", os.path.exists(script))
+    if not os.path.exists(script):
+        return ok
+
+    # IT HAS TO BE INVOKED BY A WORKFLOW. It was not — for the whole of
+    # v0.1.0 it sat there implementing three checks that nothing ran, while a
+    # second, LOOSER copy of one of them lived inline in tests.yml. Dead code
+    # that looks load-bearing is worse than no code, and this is the check
+    # that keeps it alive.
+    wf_dir = os.path.join(REPO_ROOT, ".github", "workflows")
+    workflows = "\n".join(
+        open(os.path.join(wf_dir, f), encoding="utf-8").read()
+        for f in sorted(os.listdir(wf_dir)) if f.endswith((".yml", ".yaml")))
+    ok &= check("a workflow runs ci_checks.py", "ci_checks.py" in workflows)
+    ok &= check("the secret check specifically is run",
+                "--secret-check" in workflows or "--all" in workflows)
+
+    # AND IT PASSES ON THIS REPO. A check that is always red teaches everyone
+    # to ignore checks; this one WAS red, on six documented placeholders.
+    done = subprocess.run([sys.executable, script, "--all"],
+                          cwd=REPO_ROOT, capture_output=True, text=True)
+    ok &= check("ci_checks.py --all passes on this repo (exit %d)" % done.returncode,
+                done.returncode == 0)
+    if done.returncode != 0:
+        print("        " + (done.stdout or done.stderr).strip()[-400:])
+
+    # AND IT STILL CATCHES A REAL ONE. Loosening an allowlist until the check
+    # passes is the failure mode here, so both directions are asserted: a
+    # planted CDP endpoint, a planted 32-hex key and a planted http proxy URL
+    # must all be found. The http one matters most — the inline grep this
+    # replaced covered only ws:// and would have missed a committed proxy.
+    planted = os.path.join(REPO_ROOT, "_secret_probe_delete_me.py")
+    # The key is ASSEMBLED rather than written as a literal, because a
+    # 32-character hex string sitting in this file is exactly what the check
+    # under test flags — and it did, on the first run of this test. The file
+    # it writes still gets the whole thing, which is what the probe needs.
+    planted_key = "3f8a1c9e4b7d2065" + "af13ce88b409d752"
+    try:
+        with open(planted, "w", encoding="utf-8") as f:
+            f.write(
+                'CDP = "ws://acct-zone-scraping_browser-pid-x:'
+                'S3cretPassw0rd@cb.2captcha.com:9222"\n'
+                'KEY = "%s"\n'
+                'PROXY = "http://acct-zone-custom:S3cretPassw0rd'
+                '@na.proxy.2captcha.com:2334"\n' % planted_key)
+        caught = subprocess.run([sys.executable, script, "--secret-check"],
+                                cwd=REPO_ROOT, capture_output=True, text=True)
+        out = caught.stdout + caught.stderr
+        ok &= check("a planted secret fails the check", caught.returncode != 0)
+        ok &= check("the planted ws:// CDP endpoint is named",
+                    "_secret_probe_delete_me.py:1" in out)
+        ok &= check("the planted 32-hex key is named",
+                    "_secret_probe_delete_me.py:2" in out)
+        ok &= check("the planted http:// PROXY url is named (the grep this "
+                    "replaced missed those)",
+                    "_secret_probe_delete_me.py:3" in out)
+    finally:
+        # Never leave it behind: a test that mutates the working tree is its
+        # own defect, and this one would plant a fake secret.
+        if os.path.exists(planted):
+            os.remove(planted)
+    ok &= check("the probe file is cleaned up", not os.path.exists(planted))
+
+    # The pre-publication scan: the same rules over every blob that has EVER
+    # existed. A later commit cannot remove what a published tag and a merged
+    # PR's refs already hold, so this has to be runnable BEFORE the repo goes
+    # public — and it has to be findable, which a check makes it.
+    hist = subprocess.run([sys.executable, script, "--history-check"],
+                          cwd=REPO_ROOT, capture_output=True, text=True)
+    ok &= check("--history-check runs and this history is clean",
+                hist.returncode == 0)
+    ok &= check("it says how many objects it looked at",
+                "ever existed" in hist.stdout)
+    # NOT in --all, on purpose: it shells out to git once per object, and a
+    # dirty history needs a decision rather than a red check on every push.
+    every = subprocess.run([sys.executable, script, "--all"],
+                           cwd=REPO_ROOT, capture_output=True, text=True)
+    ok &= check("--all deliberately excludes the history scan",
+                "history check" not in every.stdout)
+    return ok
+
+
 def test_no_capture_leaks():
     group("no credentials or personal data in the committed fixtures")
     ok = True
@@ -3294,6 +3380,7 @@ def main() -> int:
     ok &= test_datadome_solver()
     ok &= test_datadome_policy_is_shared()
     ok &= test_pyppeteer_teardown_noise()
+    ok &= test_ci_checks_is_actually_wired_up()
     ok &= test_no_capture_leaks()
     ok &= test_wording()
     ok &= test_fingerprint_application()
