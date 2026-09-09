@@ -84,7 +84,9 @@ from playwright.sync_api import (sync_playwright, Error as PWError,
 
 from captcha_solver import (detect_recaptcha_v3, detect_recaptcha_in_page,
                             reconcile_detections, solve_recaptcha,
-                            INJECT_TOKEN_JS, RECAPTCHA_DISCOVERY_JS)
+                            solve_datadome, CaptchaUnsolvable,
+                            DataDomeChallenge, INJECT_TOKEN_JS,
+                            RECAPTCHA_DISCOVERY_JS)
 from product_parser import (parse_products, parse_product_page,
                             shop_metadata, SELECTORS, detect_bot_challenge,
                             datadome_verdict, datadome_captcha_url, page_url,
@@ -199,7 +201,8 @@ def _min_matches(args) -> int:
 
 
 def _classify(page, html: str, status=None) -> str:
-    return page_flow.classify(html, status=status, url=page.url)
+    return page_flow.classify(html, status=status, url=page.url,
+                              frame_urls=_frame_urls(page))
 
 # Every readiness constant, every pagination selector and every state policy
 # lives in page_flow.py, with its measurement beside it. Nothing about WHAT
@@ -519,6 +522,25 @@ def _mask_credentials(text: str) -> str:
     return _CREDENTIALS_IN_URL_RE.sub(r"\1***:***@", text or "")
 
 
+def _frame_urls(page) -> List[str]:
+    """Every frame's CURRENT url, which is not what the markup says.
+
+    The one primitive that makes the DataDome hand-off visible: a challenge
+    moves from the device check to its solvable slider by navigating this
+    iframe, and neither the `dd` object nor the iframe's `src` attribute in
+    the top-level document follows. Measured: the markup said `rt='i'` for
+    120 seconds while this list said `t=fe` from second seven.
+
+    Never raises — a frame can detach between the enumeration and the read,
+    and losing the whole list to that would put the run back where it
+    started.
+    """
+    try:
+        return [f.url for f in page.frames if f.url]
+    except (PWError, PWTimeout):
+        return []
+
+
 def _content_or_none(page) -> Optional[str]:
     """The page's HTML, or None when it cannot be read right now.
 
@@ -563,6 +585,77 @@ def _content_when_settled(page, attempts: int = 4, pause_ms: int = 700):
                         pause_ms, attempt, attempts)
             page.wait_for_timeout(pause_ms)
     return None
+
+
+def handle_datadome_if_present(page, args, html: str) -> bool:
+    """Buy a DataDome solve when — and only when — one can work. True if solved.
+
+    The preconditions are checked in the order that costs least. A `t=bv`
+    page never reaches the API (the cookie it returns is not accepted), a
+    missing key or proxy is reported rather than sent, and only then is money
+    spent.
+
+    On success the cookie is set on the CONTEXT rather than on the page: the
+    reload that follows is the whole point — the cookie is what makes the
+    next request pass, not the current DOM — and a page-scoped cookie would
+    not survive it.
+    """
+    frame_urls = _frame_urls(page)
+    verdict = datadome_verdict(html, frame_urls)
+    solve_mode = getattr(args, "solve_captcha", "when-blocked")
+    if not page_flow.should_pay_for(verdict, solve_mode):
+        if verdict == "fe" and args.twocaptcha_key:
+            # Worth saying out loud: the one solvable state on this site is
+            # in front of us, a key is configured, and the run is still not
+            # spending. Silence here would read as "nothing to solve".
+            logger.info(
+                "A solvable DataDome challenge (t=fe) is on this page and "
+                "was NOT paid for: on this site the solve is opt-in, because "
+                "two of two purchases were measured returning cookies Etsy "
+                "rejected. Pass --solve-captcha always to try it anyway.")
+        return False
+
+    captcha_url = datadome_captcha_url(html, frame_urls)
+    if not captcha_url:
+        logger.warning(
+            "DataDome reports a solvable challenge (t=fe) but its iframe "
+            "carries no src to hand to the solver — not paying for a task "
+            "that cannot be scoped. --dump-html would show why.")
+        return False
+
+    if not args.twocaptcha_key:
+        logger.warning(
+            "A SOLVABLE DataDome challenge (t=fe) is on this page and no "
+            "2captcha key is configured, so it cannot be solved — continuing "
+            "with whatever the page holds. Pass --twocaptcha-key, or set "
+            "TWOCAPTCHA_KEY, to solve it.")
+        return False
+
+    challenge = DataDomeChallenge(
+        captcha_url=captcha_url, page_url=page.url,
+        # The browser's OWN user agent. The cookie is bound to it, so a
+        # literal here would buy one the site rejects.
+        user_agent=page.evaluate("navigator.userAgent"))
+    try:
+        name, value = solve_datadome(challenge, args.twocaptcha_key,
+                                     args.proxy, attempts=2)
+    except CaptchaUnsolvable as e:
+        # The vendor says "not from here". Rotating is the caller's loop's
+        # job, and no further solve is bought for this page.
+        logger.warning("DataDome will not solve from this exit: %s", e)
+        return False
+    except Exception as e:  # noqa: BLE001 — a solver failure is not a crash
+        logger.error("The DataDome solve failed (%s) — continuing with "
+                     "whatever the page holds.", e)
+        return False
+
+    page.context.add_cookies([{
+        "name": name, "value": value,
+        "domain": page_flow.datadome_cookie_domain(page.url), "path": "/",
+    }])
+    logger.info("DataDome cookie set; reloading to use it.")
+    page.reload(wait_until="domcontentloaded", timeout=60000)
+    return True
 
 
 def handle_captcha_if_present(page, args) -> bool:
@@ -679,6 +772,10 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     has_pool = bool(pool and len(pool) > 1)
     block_retries = (args.proxy_block_retries if has_pool
                      else page_flow.BLOCK_RETRIES_WITHOUT_POOL)
+    # Counted across the whole block-retry loop, not per attempt: a page that
+    # keeps coming back as a challenge would otherwise buy one solve per
+    # rotation, which is how a run quietly turns into a bill.
+    solves_bought = 0
     html, state, load_failed = None, "ok", False
 
     for block_attempt in range(block_retries + 1):
@@ -732,8 +829,40 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # `domcontentloaded` sees neither.
         html = page_flow.settle_datadome(
             lambda: _content_or_none(session.page),
-            lambda ms: session.page.wait_for_timeout(ms)) or html
+            lambda ms: session.page.wait_for_timeout(ms),
+            frames=lambda: _frame_urls(session.page)) or html
         state = _classify(session.page, html)
+
+        # The paid path, and the only state that reaches it. `should_solve`
+        # is True for "captcha" and False for "blocked", which is where the
+        # t=fe / t=bv distinction turns into a decision about money —
+        # see page_flow.STATE_POLICY and captcha_solver.solve_datadome.
+        #
+        # Bounded by SOLVES_PER_PAGE: at most one purchase per page, because
+        # the vendor's remedy for a failed solve is a different exit and the
+        # rotation below already provides one.
+        if (page_flow.should_solve(state)
+                and solves_bought < page_flow.SOLVES_PER_PAGE):
+            solves_bought += 1
+            if handle_datadome_if_present(session.page, args, html):
+                html = _content_or_none(session.page) or html
+                state = _classify(session.page, html)
+                # The VERIFIED outcome, and the only one worth reporting: a
+                # "ready" task result is not evidence the cookie works (one
+                # was measured coming back ready, and billed, for a
+                # fabricated challenge URL). This line is what says whether
+                # the money bought anything.
+                if state == "content":
+                    logger.info("The solved cookie was accepted — page %d is "
+                                "content now.", page_num)
+                else:
+                    logger.warning(
+                        "The solved cookie was NOT accepted: page %d is still "
+                        "%s. The purchase is spent. On this site that usually "
+                        "means the solve left from a different exit than the "
+                        "browser — a sticky-session proxy whose exit is keyed "
+                        "to the client cannot share one with 2captcha's "
+                        "servers.", page_num, state)
 
         if not page_flow.should_retry(state):
             # "content" and "empty" are both final answers. An empty page is
@@ -1422,12 +1551,18 @@ def parse_args():
                         "captcha and reCAPTCHA.")
     p.add_argument("--solve-captcha", choices=["when-blocked", "always"],
                    default="when-blocked",
-                   help="when-blocked (default): only pay to solve a challenge "
-                        "if the content is not already readable. always: solve "
-                        "whenever one is detected. Neither setting touches "
+                   help="when-blocked (default): only pay to solve a "
+                        "reCAPTCHA if the content is not already readable. "
+                        "always: solve whenever one is detected, AND opt in "
+                        "to the DataDome solve. Neither setting touches "
                         "Etsy's DataDome t=bv refusal, which carries no "
                         "challenge at all — no solve helps there, and none is "
-                        "attempted or billed.")
+                        "attempted or billed. The DataDome solve needs "
+                        "`always` because it was measured 0 for 2: both "
+                        "purchases returned cookies Etsy rejected, so it does "
+                        "not run by default and would bill per blocked page "
+                        "if it did. It also needs --proxy, because the cookie "
+                        "is bound to the exit that solved it.")
     p.add_argument("--min-score", type=float, default=0.7,
                    help="reCAPTCHA v3 minimum score to request (0.3, 0.7 or 0.9 "
                         "— the API only accepts these three). Ignored for v2 "

@@ -2363,6 +2363,311 @@ def test_engines(skips):
 # ---------------------------------------------------------------------------
 # Repository hygiene
 # ---------------------------------------------------------------------------
+def test_datadome_frames_beat_the_markup():
+    group("the DataDome hand-off is visible in FRAMES, not in the markup")
+    ok = True
+    from product_parser import datadome_frame_verdict
+
+    # THE MEASUREMENT THIS ENCODES. One live page, 120 seconds:
+    #
+    #   +3.1s   markup rt='i'   no challenge iframe yet
+    #   +5.1s   markup rt='i'   iframe on /interstitial/
+    #   +7.1s   markup rt='i'   iframe on /captcha/?t=fe   <- solvable
+    #   +120s   markup rt='i'   STILL
+    #
+    # The device check hands off by NAVIGATING its iframe, and neither the
+    # `dd` object nor the iframe's src attribute follows. A detector reading
+    # only the HTML therefore reports "interstitial, do not pay" forever — as
+    # it did on four of six live attempts, on pages that were solvable.
+    INTERSTITIAL = ["https://geo.captcha-delivery.com/interstitial/?cid=X"]
+    SOLVABLE = ["https://geo.captcha-delivery.com/captcha/?cid=X&hash=Y&t=fe"]
+    BANNED = ["https://geo.captcha-delivery.com/captcha/?cid=X&t=bv"]
+
+    ok &= check("a solvable frame reads t=fe",
+                datadome_frame_verdict(SOLVABLE) == "fe")
+    ok &= check("an interstitial frame reads i",
+                datadome_frame_verdict(INTERSTITIAL) == "i")
+    ok &= check("a banned frame reads bv", datadome_frame_verdict(BANNED) == "bv")
+    ok &= check("no DataDome frame reads None",
+                datadome_frame_verdict(["https://www.etsy.com/x"]) is None)
+    ok &= check("an empty list reads None", datadome_frame_verdict([]) is None)
+    ok &= check("the SOLVABLE frame wins when both are present (the hand-off)",
+                datadome_frame_verdict(INTERSTITIAL + SOLVABLE) == "fe")
+
+    # The whole point: the frames override markup that says otherwise.
+    ok &= check("markup alone still reads the interstitial",
+                datadome_verdict(DD_INTERSTITIAL_FIXTURE) == "i")
+    ok &= check("a t=fe FRAME overrides interstitial markup",
+                datadome_verdict(DD_INTERSTITIAL_FIXTURE, SOLVABLE) == "fe")
+    ok &= check("and the state becomes captcha, not blocked",
+                detect_page_state(DD_INTERSTITIAL_FIXTURE, 403, SEARCH_URL,
+                                  frame_urls=SOLVABLE) == "captcha")
+    ok &= check("so the run is willing to pay for it, once opted in",
+                page_flow.should_pay_for(
+                    datadome_verdict(DD_INTERSTITIAL_FIXTURE, SOLVABLE),
+                    "always"))
+    ok &= check("without frames it would NOT pay (the bug this encodes)",
+                not page_flow.should_pay_for(
+                    datadome_verdict(DD_INTERSTITIAL_FIXTURE), "always"))
+    ok &= check("the captchaUrl comes from the frame, not the stale attribute",
+                datadome_captcha_url(DD_INTERSTITIAL_FIXTURE, SOLVABLE)
+                == SOLVABLE[0])
+    ok &= check("an interstitial with a solvable frame is no longer 'settling'",
+                not is_datadome_interstitial(DD_INTERSTITIAL_FIXTURE, SOLVABLE))
+
+    # A served page must not be dragged into a challenge state by a leftover
+    # frame reference, and a page with no frames at all still classifies.
+    ok &= check("a served page with no frames is content",
+                detect_page_state(SEARCH_FIXTURE, 200, SEARCH_URL,
+                                  frame_urls=[]) == "content")
+    ok &= check("a --dump-html file (no frames available) still classifies",
+                detect_page_state(DD_BANNED_FIXTURE, 403, SEARCH_URL) == "blocked")
+
+    # settle_datadome must STOP as soon as the frames say solvable, rather
+    # than waiting out its whole budget on markup that never changes.
+    rounds = {"n": 0}
+
+    def frames():
+        rounds["n"] += 1
+        return INTERSTITIAL if rounds["n"] < 3 else SOLVABLE
+
+    out = page_flow.settle_datadome(lambda: DD_INTERSTITIAL_FIXTURE,
+                                    lambda ms: None, rounds=20, pause_ms=1,
+                                    frames=frames)
+    ok &= check("settle_datadome stops when the FRAMES resolve",
+                rounds["n"] <= 4 and datadome_verdict(out, SOLVABLE) == "fe")
+
+    # And every engine has to pass its frame list, or it is back to the bug.
+    for name in ENGINES:
+        src = open(os.path.join(REPO_ROOT, name + ".py"), encoding="utf-8").read()
+        ok &= check("%s has a frame-URL primitive" % name,
+                    "def _frame_urls(" in src)
+        ok &= check("%s passes frames to classify" % name,
+                    "frame_urls=_frame_urls(" in src)
+        ok &= check("%s passes frames to settle_datadome" % name,
+                    "frames=lambda: _frame_urls(" in src)
+        ok &= check("%s passes frames when deciding to pay" % name,
+                    "datadome_verdict(html, frame_urls)" in src)
+        ok &= check("%s takes the captchaUrl from the frames too" % name,
+                    "datadome_captcha_url(html, frame_urls)" in src)
+    return ok
+
+
+def test_datadome_solver():
+    group("the DataDome solve: what it refuses to pay for, and what it sends")
+    ok = True
+    from captcha_solver import (DataDomeChallenge, CaptchaUnsolvable,
+                                solve_datadome, datadome_proxy_fields,
+                                parse_datadome_cookie, _raise_for_datadome_error,
+                                TWOCAPTCHA_DATADOME_TASK)
+
+    fe = DataDomeChallenge(
+        "https://geo.captcha-delivery.com/captcha/?cid=X&hash=Y&t=fe&e=Z",
+        "https://www.etsy.com/de/search?q=x", "Mozilla/5.0 Chrome/140")
+    bv = DataDomeChallenge(
+        "https://geo.captcha-delivery.com/captcha/?cid=X&t=bv",
+        "https://www.etsy.com/de/search?q=x", "Mozilla/5.0 Chrome/140")
+
+    ok &= check("t is read off the challenge URL", (fe.t, bv.t) == ("fe", "bv"))
+    ok &= check("only t=fe is solvable", fe.is_solvable and not bv.is_solvable)
+
+    # THE THREE REFUSALS, and none of them reaches the network. Each is a way
+    # a run could otherwise spend money on a task that cannot succeed.
+    KEY = "k" * 32
+    PROXY = "http://user:pass@na.proxy.example:2334"
+    for label, ch, key, proxy, want in (
+            ("a t=bv page is never sent to the API", bv, KEY, PROXY, CaptchaUnsolvable),
+            ("no key is reported, not sent", fe, None, PROXY, RuntimeError),
+            ("no proxy is reported, not sent", fe, KEY, None, RuntimeError)):
+        try:
+            solve_datadome(ch, key, proxy, attempts=1)
+            ok &= check(label, False)
+        except want as e:
+            ok &= check(label, True)
+            if want is CaptchaUnsolvable:
+                ok &= check("the t=bv refusal says the cookie is not accepted",
+                            "not accepted" in str(e))
+        except Exception as e:  # noqa: BLE001
+            ok &= check("%s (got %s)" % (label, type(e).__name__), False)
+
+    # The no-proxy refusal has to name the CDP case, because that is the
+    # configuration a user of this repo is most likely to be in.
+    try:
+        solve_datadome(fe, KEY, None, attempts=1)
+    except RuntimeError as e:
+        ok &= check("the no-proxy refusal explains the --cdp-endpoint case",
+                    "cdp-endpoint" in str(e))
+
+    # The task fields the API requires.
+    fields = datadome_proxy_fields(PROXY)
+    ok &= check("proxy host, port and credentials are all sent",
+                fields == {"proxyType": "http",
+                           "proxyAddress": "na.proxy.example",
+                           "proxyPort": 2334,
+                           "proxyLogin": "user", "proxyPassword": "pass"})
+    ok &= check("socks5 is accepted (the measured gateway speaks it)",
+                datadome_proxy_fields("socks5://u:p@h:2333")["proxyType"] == "socks5")
+    ok &= check("socks5h is normalised to socks5",
+                datadome_proxy_fields("socks5h://u:p@h:2333")["proxyType"] == "socks5")
+    ok &= check("an unauthenticated proxy sends no login fields",
+                set(datadome_proxy_fields("http://h:8080")) ==
+                {"proxyType", "proxyAddress", "proxyPort"})
+    ok &= check("no proxy yields {} so the caller can tell it apart",
+                datadome_proxy_fields(None) == {})
+    ok &= check("a portless proxy is refused rather than sent",
+                _raises(lambda: datadome_proxy_fields("http://u:p@hostonly")))
+    ok &= check("a scheme 2Captcha does not accept is refused",
+                _raises(lambda: datadome_proxy_fields("ftp://u:p@h:21")))
+    # The log line has to make the weaker, true claim. "solved" is the
+    # vendor's word for something it was measured saying about a challenge
+    # that never existed.
+    solver_src = inspect.getsource(captcha_solver.solve_datadome)
+    ok &= check("the solver says the API RETURNED a cookie, not that it solved",
+                "returned a" in solver_src and "decided by the reload" in solver_src)
+    ok &= check("the solver documents that `ready` is not evidence",
+                "FABRICATED" in solver_src)
+    ok &= check("the solver documents that `ip` is the requester, not the exit",
+                "REQUESTER" in solver_src)
+    ok &= check("the task type is the documented one",
+                TWOCAPTCHA_DATADOME_TASK == "DataDomeSliderTask")
+
+    # A PROXY PASSWORD IS A SECRET, and an exception message is a log. This
+    # was a real leak: a portless-proxy refusal printed the whole URL.
+    for bad in ("http://u:supersecret@hostonly", "socks5://login:supersecret@h"):
+        try:
+            datadome_proxy_fields(bad)
+        except ValueError as e:
+            ok &= check("the refusal for %s masks the password" % bad.split("://")[0],
+                        "supersecret" not in str(e))
+    ok &= check("masking is global, not just the first occurrence",
+                "pass@" not in captcha_solver._redact(
+                    "a http://u:pass@h1:1 b http://u:pass@h2:2"))
+    ok &= check("the host and port survive masking (which exit failed matters)",
+                "h1:1" in captcha_solver._redact("http://u:pass@h1:1"))
+
+    # The cookie the API returns arrives Set-Cookie-shaped.
+    ok &= check("the cookie name and value are parsed out",
+                parse_datadome_cookie(
+                    "datadome=ABC.123-xyz; Max-Age=31536000; Domain=.etsy.com; "
+                    "Path=/; Secure; SameSite=Lax") == ("datadome", "ABC.123-xyz"))
+    ok &= check("a bare name=value works too",
+                parse_datadome_cookie("datadome=V") == ("datadome", "V"))
+    ok &= check("an unreadable cookie raises rather than half-answering",
+                _raises(lambda: parse_datadome_cookie("")))
+
+    # "Not from here" must be a DIFFERENT exception from "try again", because
+    # they call for opposite actions: rotate versus retry.
+    ok &= check("ERROR_CAPTCHA_UNSOLVABLE is CaptchaUnsolvable (rotate)",
+                _raises_type(lambda: _raise_for_datadome_error(
+                    {"errorId": 1, "errorCode": "ERROR_CAPTCHA_UNSOLVABLE"}),
+                    CaptchaUnsolvable))
+    ok &= check("a banned proxy is CaptchaUnsolvable too",
+                _raises_type(lambda: _raise_for_datadome_error(
+                    {"errorId": 1, "errorCode": "ERROR_PROXY_BANNED"}),
+                    CaptchaUnsolvable))
+    ok &= check("an unrecognised error is a plain RuntimeError (retry)",
+                _raises_type(lambda: _raise_for_datadome_error(
+                    {"errorId": 1, "errorCode": "ERROR_NO_SLOT_AVAILABLE"}),
+                    RuntimeError)
+                and not _raises_type(lambda: _raise_for_datadome_error(
+                    {"errorId": 1, "errorCode": "ERROR_NO_SLOT_AVAILABLE"}),
+                    CaptchaUnsolvable))
+    ok &= check("an error description is redacted before it is raised",
+                _no_secret_in(lambda: _raise_for_datadome_error(
+                    {"errorId": 1, "errorCode": "ERROR_X",
+                     "errorDescription": "failed for clientKey=abcdef123456"}),
+                    "abcdef123456"))
+    return ok
+
+
+def _raises_type(fn, exc_type) -> bool:
+    """True if `fn()` raises exactly `exc_type` (or a subclass)."""
+    try:
+        fn()
+    except exc_type:
+        return True
+    except Exception:  # noqa: BLE001 — a different type is a failed check
+        return False
+    return False
+
+
+def _no_secret_in(fn, secret: str) -> bool:
+    """True if `fn()` raises and the secret is absent from the message."""
+    try:
+        fn()
+    except Exception as e:  # noqa: BLE001
+        return secret not in str(e)
+    return False
+
+
+def test_datadome_policy_is_shared():
+    group("all three engines agree on when a DataDome solve is bought")
+    ok = True
+    ok &= check("only t=fe is worth paying for",
+                page_flow.should_pay_for("fe", "always")
+                and not any(page_flow.should_pay_for(v, "always")
+                            for v in ("bv", "i", "", None)))
+    # THE DEFAULT DOES NOT SPEND MONEY, and that is measured rather than
+    # cautious: two of two purchases returned cookies Etsy rejected, so a
+    # run that paid per blocked page by default would bill for nothing.
+    ok &= check("the default declines even a solvable challenge",
+                not page_flow.should_pay_for("fe", "when-blocked"))
+    ok &= check("--solve-captcha always is the opt-in",
+                page_flow.should_pay_for("fe", "always"))
+    ok &= check("the opt-in is documented as a measurement",
+                page_flow.DATADOME_SOLVE_IS_OPT_IN is True)
+    ok &= check("at most one solve is bought per page",
+                page_flow.SOLVES_PER_PAGE == 1)
+    ok &= check("the cookie domain comes from the page, not from the API",
+                page_flow.datadome_cookie_domain(
+                    "https://www.etsy.com/de/search?q=x") == ".etsy.com")
+    ok &= check("a bare host still yields a dotted domain",
+                page_flow.datadome_cookie_domain("https://etsy.com/x") == ".etsy.com")
+
+    # Every engine must reach the paid path through the SHARED policy, and
+    # must cap purchases. An engine that spent money on its own terms is the
+    # drift page_flow.py exists to prevent, and it would show up as a bill
+    # rather than as a failed run.
+    for name in ENGINES:
+        path = os.path.join(REPO_ROOT, name + ".py")
+        src = open(path, encoding="utf-8").read()
+        ok &= check("%s has a DataDome solve path" % name,
+                    "handle_datadome_if_present" in src)
+        ok &= check("%s gates it on page_flow.should_solve" % name,
+                    "page_flow.should_solve(state)" in src)
+        ok &= check("%s asks page_flow whether to pay" % name,
+                    "page_flow.should_pay_for" in src)
+        ok &= check("%s passes --solve-captcha into that decision" % name,
+                    "should_pay_for(verdict, solve_mode)" in src)
+        ok &= check("%s says why when it declines a solvable challenge" % name,
+                    "the solve is opt-in" in src)
+        ok &= check("%s caps purchases with SOLVES_PER_PAGE" % name,
+                    "page_flow.SOLVES_PER_PAGE" in src)
+        ok &= check("%s counts purchases outside the retry loop" % name,
+                    "solves_bought = 0" in src)
+        ok &= check("%s takes the cookie domain from page_flow" % name,
+                    "page_flow.datadome_cookie_domain" in src)
+        ok &= check("%s reads the browser's OWN user agent" % name,
+                    "navigator.userAgent" in src)
+        ok &= check("%s treats CaptchaUnsolvable as rotate, not crash" % name,
+                    "except CaptchaUnsolvable" in src)
+        # THE VERDICT MUST BE VERIFIED, NOT ASSUMED. A task was measured
+        # returning `status: ready` with a billable cookie for a FABRICATED
+        # captchaUrl, so the API's own answer proves nothing — only the
+        # reload does. An engine that logged "solved" and moved on would be
+        # reporting success it had not checked, which is this codebase's
+        # worst habit.
+        ok &= check("%s reports whether the cookie was ACCEPTED" % name,
+                    "was accepted" in src and "NOT accepted" in src)
+        ok &= check("%s warns rather than informs when it was not" % name,
+                    "logger.warning(\n                        \"The solved cookie was NOT accepted" in src
+                    or "The solved cookie was NOT accepted" in src)
+        ok &= check("%s reloads after setting the cookie" % name,
+                    any(m in src for m in ("page.reload", "driver.refresh()",
+                                           "page.reload(")))
+    return ok
+
+
 def test_pyppeteer_teardown_noise():
     group("pyppeteer teardown noise is suppressed, and its limit is pinned")
     ok = True
@@ -2985,6 +3290,9 @@ def main() -> int:
     ok &= test_env_config()
     ok &= test_proxy_pool()
     ok &= test_engines(skips)
+    ok &= test_datadome_frames_beat_the_markup()
+    ok &= test_datadome_solver()
+    ok &= test_datadome_policy_is_shared()
     ok &= test_pyppeteer_teardown_noise()
     ok &= test_no_capture_leaks()
     ok &= test_wording()

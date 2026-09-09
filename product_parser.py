@@ -631,7 +631,54 @@ def detect_bot_challenge(html: str, url: Optional[str] = None) -> Optional[str]:
 _DD_RT_RE = re.compile(r"['\"]?\brt['\"]?\s*[:=]\s*['\"](\w+)['\"]")
 
 
-def datadome_verdict(html: str) -> Optional[str]:
+# THE TOP-LEVEL `dd` OBJECT NEVER UPDATES, AND THE CHALLENGE MOVES WITHOUT IT.
+#
+# Measured 2026-09-09 over 120 seconds on one live page:
+#
+#     +3.1s   dd says rt='i'   no challenge iframe yet
+#     +5.1s   dd says rt='i'   iframe at geo.captcha-delivery.com/interstitial/
+#     +7.1s   dd says rt='i'   iframe at geo.captcha-delivery.com/captcha/?t=fe
+#     ...
+#     +120s   dd STILL says rt='i'
+#
+# The device check hands off to a solvable slider by NAVIGATING ITS IFRAME,
+# and neither the `dd` object nor the iframe's `src` ATTRIBUTE in the
+# top-level document changes when it does. So a detector that reads only the
+# HTML sees `rt='i'` forever and can never find the `t=fe` it is waiting for.
+#
+# That is not a theoretical gap: six live attempts through this repo's own
+# code reported "interstitial, do not pay" on four pages that had a solvable
+# challenge sitting in their iframe, and the paid path was unreachable.
+#
+# So the LIVE FRAME URLS are the primary evidence where a caller can supply
+# them, and the HTML is the fallback for callers that cannot — a `--dump-html`
+# file read back has no frames at all.
+_DATADOME_FRAME_T_RE = re.compile(r"[?&]t=(\w+)")
+
+
+def datadome_frame_verdict(frame_urls) -> Optional[str]:
+    """The `t` of the DataDome challenge frame, or None if there is none.
+
+    Prefers a solvable frame when several are present: a page can hold the
+    interstitial and the slider at once during the hand-off, and the
+    solvable one is the answer that matters.
+    """
+    verdicts = []
+    for url in frame_urls or ():
+        if not url or _DATADOME_HOST not in url:
+            continue
+        m = _DATADOME_FRAME_T_RE.search(url)
+        verdicts.append(m.group(1) if m else
+                        ("i" if "/interstitial/" in url else ""))
+    if not verdicts:
+        return None
+    for preferred in ("fe", "bv"):
+        if preferred in verdicts:
+            return preferred
+    return verdicts[0]
+
+
+def datadome_verdict(html: str, frame_urls=None) -> Optional[str]:
     """"bv", "fe", "i" (interstitial), "" (DataDome, unstated) or None.
 
     Separate from `detect_page_state` because the engines need the raw answer
@@ -653,7 +700,17 @@ def datadome_verdict(html: str) -> Optional[str]:
     reports "blocked" on a page that was about to become solvable, or about
     to clear itself. See `page_flow.settle_datadome`.
     """
+    # Frames first, and they WIN. See the note above: the top-level object
+    # keeps saying rt='i' while the iframe has already moved to t=fe, so
+    # trusting the HTML here is what made the paid path unreachable.
+    from_frames = datadome_frame_verdict(frame_urls)
+    if from_frames:
+        return from_frames
+
     if not html or _DATADOME_HOST not in _strip_extension_tags(html):
+        # No frames said anything and the markup has no DataDome in it. If
+        # frames were supplied and held nothing, that is a real "not a
+        # DataDome page" rather than a missing observation.
         return None
     m = _DD_T_RE.search(html)
     if m:
@@ -666,12 +723,18 @@ def datadome_verdict(html: str) -> Optional[str]:
     return ""
 
 
-def is_datadome_interstitial(html: str) -> bool:
-    """Whether the page is a DataDome check that has not resolved yet."""
-    return datadome_verdict(html) == "i"
+def is_datadome_interstitial(html: str, frame_urls=None) -> bool:
+    """Whether the page is a DataDome check that has not resolved yet.
+
+    `frame_urls` matters here more than anywhere: without it, a page whose
+    iframe has already reached the solvable slider still reads as an
+    unresolved interstitial, and a caller waiting for it to settle waits
+    forever.
+    """
+    return datadome_verdict(html, frame_urls) == "i"
 
 
-def datadome_captcha_url(html: str) -> Optional[str]:
+def datadome_captcha_url(html: str, frame_urls=None) -> Optional[str]:
     """The challenge iframe's src, for `DataDomeSliderTask`'s `captchaUrl`.
 
     2Captcha wants the iframe URL as the page carries it — it holds the
@@ -679,6 +742,18 @@ def datadome_captcha_url(html: str) -> Optional[str]:
     HTML-unescaped, because the served markup writes its separators as
     `&amp;` and the API needs the real URL.
     """
+    # A live frame URL beats the markup for the same reason the verdict does:
+    # the iframe navigates and its `src` attribute does not follow. Prefer a
+    # solvable frame, then any DataDome frame, then the attribute.
+    solvable = [u for u in (frame_urls or ())
+                if u and _DATADOME_HOST in u and "t=fe" in u]
+    if solvable:
+        return solvable[0]
+    any_frame = [u for u in (frame_urls or ())
+                 if u and _DATADOME_HOST in u and "/captcha/" in u]
+    if any_frame:
+        return any_frame[0]
+
     if not html:
         return None
     m = re.search(r'<iframe[^>]+src="([^"]*captcha-delivery\.com[^"]*)"',
@@ -689,7 +764,7 @@ def datadome_captcha_url(html: str) -> Optional[str]:
 
 
 def detect_page_state(html: str, status: Optional[int] = None,
-                      url: Optional[str] = None) -> str:
+                      url: Optional[str] = None, frame_urls=None) -> str:
     """One of "blocked", "captcha", "empty", "content".
 
     `status` is optional because not every engine path can see it — a page
@@ -699,7 +774,7 @@ def detect_page_state(html: str, status: Optional[int] = None,
     if not html:
         return "blocked" if status and status >= 400 else "empty"
 
-    verdict = datadome_verdict(html)
+    verdict = datadome_verdict(html, frame_urls)
     if verdict is not None:
         # A DataDome shell is never content: it is ~1.5 KB with no tiles on
         # it. Which state it is depends on `t`.

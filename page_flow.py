@@ -188,7 +188,7 @@ INTERSTITIAL_PAUSE_MS = 1500
 
 
 def settle_datadome(content, sleep, rounds: int = INTERSTITIAL_ROUNDS,
-                    pause_ms: int = INTERSTITIAL_PAUSE_MS):
+                    pause_ms: int = INTERSTITIAL_PAUSE_MS, frames=None):
     """Let an unresolved DataDome check finish, and return the final HTML.
 
     Returns as soon as the page is anything OTHER than an interstitial — a
@@ -202,28 +202,41 @@ def settle_datadome(content, sleep, rounds: int = INTERSTITIAL_ROUNDS,
     final answer would hand the caller the interstitial it started with and
     report a block on a page that had just cleared itself.
 
-    Driven through the caller's own `content()` and `sleep(ms)` so this stays
-    free of any driver's dialect; each engine passes its own primitives and
-    all three then wait exactly the same way. `content()` must return None
-    rather than raise when the document cannot be read.
+    Driven through the caller's own `content()`, `sleep(ms)` and — where a
+    live browser exists — `frames()` primitives, so this stays free of any
+    driver's dialect; each engine passes its own and all three then wait
+    exactly the same way. `content()` must return None rather than raise when
+    the document cannot be read.
+
+    `frames()` IS WHAT MAKES THIS TERMINATE. The hand-off from the device
+    check to the solvable slider happens in the iframe and NOT in the
+    top-level markup, which was measured holding `rt='i'` for two solid
+    minutes while the iframe had moved on at seven seconds. Without the frame
+    list this function waits out its whole budget on a page that resolved
+    almost immediately, and then reports a block.
     """
-    html = content()
-    if html and not is_datadome_interstitial(html):
+    def look():
+        html = content()
+        urls = frames() if frames else None
+        return html, urls
+
+    html, urls = look()
+    if html and not is_datadome_interstitial(html, urls):
         return html
     last_seen = html
     for attempt in range(1, rounds + 1):
         sleep(pause_ms)
-        html = content()
+        html, urls = look()
         if not html:
             # Mid-navigation. Keep the last readable markup so the caller is
             # never handed None, and keep waiting.
             continue
         last_seen = html
-        if not is_datadome_interstitial(html):
+        if not is_datadome_interstitial(html, urls):
+            verdict = datadome_verdict(html, urls)
             logger.info("DataDome interstitial resolved after %.1fs into %s.",
                         attempt * pause_ms / 1000.0,
-                        "content" if datadome_verdict(html) is None
-                        else "t=%s" % datadome_verdict(html))
+                        "content" if verdict is None else "t=%s" % verdict)
             return html
     logger.info("DataDome interstitial did not resolve within %.0fs; "
                 "treating it as a block.", rounds * pause_ms / 1000.0)
@@ -249,14 +262,23 @@ def content_timeout_ms(mode: str) -> int:
 
 
 def classify(html: Optional[str], status: Optional[int] = None,
-             url: Optional[str] = None) -> str:
+             url: Optional[str] = None, frame_urls=None) -> str:
     """The page's state, as the engines see it.
 
     A thin wrapper over `product_parser.detect_page_state` so that every
     engine reaches the policy through one name, and so that a future change
     to how a state is decided lands in one place rather than three.
+
+    `frame_urls` is not optional in spirit. A DataDome challenge hands off to
+    its solvable form by NAVIGATING ITS IFRAME, and the top-level markup does
+    not follow — measured holding `rt='i'` for 120 seconds while the iframe
+    sat on `t=fe`. An engine that omits its frame list therefore reports
+    "blocked" on pages that were solvable, which is how the paid path became
+    unreachable in the first place. Pass it wherever a live browser exists;
+    a `--dump-html` file read back has no frames and honestly cannot.
     """
-    return detect_page_state(html or "", status=status, url=url)
+    return detect_page_state(html or "", status=status, url=url,
+                             frame_urls=frame_urls)
 
 
 # What each state means for the run. Kept as data rather than as three copies
@@ -295,6 +317,85 @@ def should_solve(state: str) -> bool:
 
 def counts_as_blocked(state: str) -> bool:
     return STATE_POLICY.get(state, {}).get("blocked", False)
+
+
+# How many times a DataDome solve may be BOUGHT for one page.
+#
+# One, and that is a deliberate ceiling rather than a placeholder. The
+# vendor's own remedy for a failed solve is a different exit, so a second
+# purchase from the same address is money spent to be told the same thing —
+# and the engines' block-retry loop already rotates and reloads, which
+# produces a fresh challenge to solve from somewhere else. Measured
+# 2026-09-09: two `t=fe` pages, two ERROR_CAPTCHA_UNSOLVABLE.
+#
+# `captcha_solver.solve_datadome` retries TRANSIENT failures internally (a
+# task that would not create, a poll that errored) and raises
+# `CaptchaUnsolvable` on the first "not from here", so this number counts
+# purchases and not attempts.
+SOLVES_PER_PAGE = 1
+
+
+# The DataDome solve is OPT-IN on this site, and that is a measurement rather
+# than caution. Six frame-aware attempts on 2026-09-10, each from a fresh
+# residential exit:
+#
+#     2 reached t=fe, both solved (billed $0.00145 each) — and BOTH cookies
+#       were REJECTED: the page came back t=bv afterwards, 0 rows
+#     2 were interstitials whose challenge iframe never appeared at all
+#     2 exits were dead
+#
+# Zero for two on the purchases that completed. A default that spends a
+# user's money at that rate is not defensible, so the path requires
+# `--solve-captcha always` — and the log says why when it declines.
+#
+# Worse, the vendor's "ready" is not evidence of anything: a task built from
+# a FABRICATED captchaUrl (invented cid and hash, a challenge that never
+# existed) came back ready with a billable cookie. So there is no way to tell
+# a good solve from a worthless one except by reloading the page, which is
+# what the engines do.
+DATADOME_SOLVE_IS_OPT_IN = True
+
+
+def should_pay_for(verdict: Optional[str],
+                   solve_mode: str = "when-blocked") -> bool:
+    """Whether a DataDome page is worth buying a solve for.
+
+    One place, so the three engines cannot disagree about when money is
+    spent. `verdict` is `product_parser.datadome_verdict`'s answer:
+
+        "fe"  a real slider              -> yes, IF opted in (see above)
+        "bv"  address or browser banned  -> NO; the cookie is not accepted
+        "i"   still deciding             -> no; wait it out first
+        ""    DataDome, `t` unstated     -> no; nothing says it is solvable
+        None  not a DataDome page        -> no
+
+    `solve_mode` is the `--solve-captcha` value. `always` is the opt-in;
+    the default `when-blocked` declines, because on this site a DataDome
+    block is the ordinary case and paying for it by default would bill a
+    user per blocked page for a cookie measured not to work.
+    """
+    if verdict != "fe":
+        return False
+    if DATADOME_SOLVE_IS_OPT_IN and solve_mode != "always":
+        return False
+    return True
+
+
+def datadome_cookie_domain(url: str) -> str:
+    """The domain to set a solved DataDome cookie on.
+
+    Derived from the URL the browser is actually on rather than taken from
+    the API's own `Domain` attribute, because a cookie set on the wrong
+    domain is silently ignored — which looks exactly like a solve that did
+    not work, and costs another one to "fix".
+
+    Leading dot, so it covers the locale-prefixed paths and any subdomain the
+    site redirects to.
+    """
+    host = urlparse(url or "").hostname or "www.etsy.com"
+    if host.startswith("www."):
+        host = host[4:]
+    return "." + host
 
 
 def comparable(url: str) -> str:

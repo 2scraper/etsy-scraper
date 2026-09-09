@@ -87,6 +87,16 @@ A `pid` that has been refused repeatedly does stay burnt, though. If three
 retries do not clear it, use a different `pid` — reuse a handful rather than
 minting one per run, since they are capped per account.
 
+**And expect this to vary through the day.** Measured across 2026-09-09/10 on
+one account: in the morning a fresh profile served three full pages of search
+results; by late evening two fresh profiles were refused with `t=bv` through
+all three retries while a third served a shop front in full, twice. Same code,
+same zone, same URLs. So a red run is not by itself evidence of a code
+change — try another `pid` and check the log's `t` value before going looking
+for one. The numbers in this README are from the runs that got through, and
+they are what the canary thresholds; the intermittency is the site, and it is
+the reason the canary retries four times.
+
 ---
 
 ## What a healthy run looks like
@@ -327,10 +337,50 @@ site rather than the scraper.
   residential gateway answered **SOCKS5 only** on the ports tested
   (`na.proxy.2captcha.com:2333` and `:2334`), and Chromium cannot
   authenticate a SOCKS5 proxy — so these flags need the HTTP endpoint.
-* **Captcha solving** (`--twocaptcha-key`) — the **fallback**, and only for a
-  `t=fe` page. Measured over five attempts on five fresh residential exits:
-  two reached `t=fe` and both returned `ERROR_CAPTCHA_UNSOLVABLE`, two never
-  reached `t=fe`, and one exit was dead. Budget accordingly.
+* **Captcha solving** (`--twocaptcha-key`) — wired, opt-in, and **measured 0
+  for 2**. It is the fallback, not the plan.
+
+  Six frame-aware attempts on 2026-09-10, each from a fresh residential exit:
+
+  | outcome | count |
+  |---|---|
+  | reached `t=fe`, solved, **cookie rejected** (page came back `t=bv`, 0 rows) | 2 |
+  | interstitial whose challenge iframe never appeared | 2 |
+  | the exit itself was dead | 2 |
+
+  Both purchases completed and cost $0.00145 each. Neither got in. So the
+  DataDome solve requires **`--solve-captcha always`** — it does not run by
+  default, because a default that bills per blocked page for a cookie that
+  does not work is not a default worth having. The run says so when it
+  declines.
+
+  Worse, and worth knowing before you trust any solver's own report: a task
+  built from a **fabricated** `captchaUrl` — invented `cid` and `hash`, a
+  challenge that never existed — came back `status: ready` with a billable
+  cookie. So "solved" is not evidence of anything. This scraper treats the
+  RELOAD as the only success signal and logs whether the cookie was accepted.
+  The result's `ip` field is no help either: it reported this machine's own
+  egress on every task, including ones that passed a residential proxy.
+
+  All three engines drive `DataDomeSliderTask`, but a solve is bought only
+  when every one of these holds:
+
+  | condition | why |
+  |---|---|
+  | the page is `t=fe` | a `t=fe` cookie is the only kind Etsy accepts |
+  | a key is configured | otherwise the run says so and continues |
+  | **a proxy is configured** | the cookie is bound to the address that solved it, so the solve must leave from the browser's exit — and 2Captcha's API requires the fields |
+  | fewer than one solve has been bought for this page | the vendor's remedy for a failed solve is a *different exit*, which the rotation already provides |
+
+  **Over `--cdp-endpoint` this path cannot run at all**, and the refusal says
+  so: the remote browser owns its exit and does not disclose it, so there is
+  no proxy to pass. That is not a gap to work around — on the measured runs
+  the Scraping Browser needed no solve in the first place.
+
+  `ERROR_CAPTCHA_UNSOLVABLE` (and the proxy-banned codes) raise a distinct
+  exception from a transient failure, because they call for opposite actions:
+  rotate versus retry. A transient failure is retried inside the solver; an
+  unsolvable one is not retried at all.
 * **Fingerprints** (`--fingerprint`) — for a local browser only; ignored with
   `--cdp-endpoint`, because the remote browser brings its own and stacking a
   second creates a mismatch rather than better cover.

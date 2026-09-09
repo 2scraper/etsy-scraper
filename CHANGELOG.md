@@ -11,6 +11,84 @@ with it, so nobody discovers it from a bill or from a diff.
 
 ---
 
+## [Unreleased]
+
+### The DataDome fallback, wired — and measured
+
+`v0.1.0` shipped with the DataDome solve documented as "not covered". It is
+now implemented in all three engines, and implementing it turned up a defect
+that made the whole path unreachable.
+
+**The challenge hand-off is invisible in the markup.** DataDome's device check
+becomes a solvable slider by NAVIGATING ITS IFRAME, and neither the top-level
+`dd` object nor the iframe's `src` attribute follows. Measured over 120
+seconds on one live page:
+
+    +3.1s   markup rt='i'   no challenge iframe yet
+    +5.1s   markup rt='i'   iframe on /interstitial/
+    +7.1s   markup rt='i'   iframe on /captcha/?t=fe   <- solvable
+    +120s   markup rt='i'   STILL
+
+So a detector reading only the HTML reports "interstitial, do not pay"
+forever. Six live attempts through this repo's own code did exactly that on
+four pages — the paid path could not fire at all. Detection now reads the
+LIVE FRAME URLS, which every engine supplies through its own primitive
+(`page.frames` for two of them; Selenium has to switch into each iframe and
+ask it where it is, then switch back).
+
+**And then the solve was measured, six attempts from six fresh exits:**
+
+| outcome | count |
+|---|---|
+| reached `t=fe`, solved, **cookie rejected** (`t=bv` after the reload, 0 rows) | 2 |
+| interstitial whose challenge iframe never appeared | 2 |
+| dead exit | 2 |
+
+Zero for two on the purchases that completed, at $0.00145 each. So the solve
+is **opt-in** (`--solve-captcha always`) rather than on by default, and the
+run explains itself when it declines.
+
+**Two things the vendor's own answer does not tell you**, both measured and
+both now stated in the code:
+
+* `status: "ready"` is not "solved". A task built from a FABRICATED
+  `captchaUrl` — invented `cid` and `hash` — came back ready with a billable
+  cookie. The only evidence a solve worked is the page loading afterwards, so
+  the engines verify by reloading and log whether the cookie was accepted.
+* `ip` in the result is the REQUESTER's address, not the proxy exit. It
+  reported this machine's own egress on every task.
+
+### Added
+
+- `captcha_solver.solve_datadome`, `DataDomeChallenge` and
+  `CaptchaUnsolvable`. The unsolvable case is a distinct exception because it
+  calls for a different action: the vendor's documented remedy is a different
+  exit, so it is never retried from the same one, while transient failures
+  are.
+- `page_flow.should_pay_for`, `SOLVES_PER_PAGE` (one) and
+  `datadome_cookie_domain`, so the three engines cannot disagree about when
+  money is spent or where the cookie goes. The domain comes from the page the
+  browser is on, not from the API's own `Domain` attribute — a cookie set on
+  the wrong domain is silently ignored, which looks exactly like a solve that
+  did not work and costs another one to "fix".
+- 40 checks covering the paid path, including that the default does NOT spend
+  money and that a real exception still gets through the noise filter.
+
+### Fixed
+
+- **A proxy password could reach a log.** `captcha_solver._redact` masked
+  `key=`/`token=` query parameters but not credentials in a URL's userinfo —
+  and this module now takes a proxy, so its errors can quote one. A
+  portless-proxy refusal printed the whole URL. Masking is global and keeps
+  the host and port, because which exit failed is the useful half.
+- **`claude.yml` did not pin the Claude CLI to the stable channel** while its
+  twin `claude-code-review.yml` did. On 2026-09-08 `latest` left no binary
+  where the action looks and every run died; one of a pair of workflows
+  carrying the fix and the other not is how one of them goes red for a reason
+  nobody can see in the other.
+
+---
+
 ## [0.1.0] — 2026-09-09
 
 Rewritten from scratch as a member of the 2scraper family. The previous
