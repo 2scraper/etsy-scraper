@@ -69,6 +69,34 @@ include.
 well as failure, and a run that finds nothing writes a dump and a screenshot
 next to the output on its own.
 
+## Before this repository goes public
+
+One item cannot be undone later, so it belongs on a checklist rather than in
+someone's head. **A commit on top cannot reach what a published tag and a
+merged PR's refs already hold** — those stay attached to the PR and cannot be
+deleted from it. Afterwards, only a fresh repository removes anything.
+
+```bash
+python3 .github/ci_checks.py --history-check
+```
+
+That applies the same credential rules CI enforces to **every blob that has
+ever existed**, not just the working tree. It is deliberately not part of
+`--all` and not run by CI: it shells out to git once per object, and a dirty
+history needs a decision, not a red check on every push.
+
+Then the rest of the presentation, in the order that matters:
+
+1. `python3 smoke_test.py` green, and the canary dispatched at least once —
+   including its SKIP branch, which is what runs when the
+   `ETSY_CDP_ENDPOINT` secret is absent.
+2. The repo description, homepage and topics set (see the family notes on
+   what those should say).
+3. Only then the row in the org profile README — and check it with an
+   ANONYMOUS request rather than your own logged-in browser. A row pointing
+   at a private repo is a 404 for every visitor, which costs more trust than
+   the missing row.
+
 ## Pull requests
 
 **Add a test for the behaviour you are changing.** `smoke_test.py` is a single

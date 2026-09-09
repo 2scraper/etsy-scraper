@@ -2796,6 +2796,23 @@ def test_ci_checks_is_actually_wired_up():
         if os.path.exists(planted):
             os.remove(planted)
     ok &= check("the probe file is cleaned up", not os.path.exists(planted))
+
+    # The pre-publication scan: the same rules over every blob that has EVER
+    # existed. A later commit cannot remove what a published tag and a merged
+    # PR's refs already hold, so this has to be runnable BEFORE the repo goes
+    # public — and it has to be findable, which a check makes it.
+    hist = subprocess.run([sys.executable, script, "--history-check"],
+                          cwd=REPO_ROOT, capture_output=True, text=True)
+    ok &= check("--history-check runs and this history is clean",
+                hist.returncode == 0)
+    ok &= check("it says how many objects it looked at",
+                "ever existed" in hist.stdout)
+    # NOT in --all, on purpose: it shells out to git once per object, and a
+    # dirty history needs a decision rather than a red check on every push.
+    every = subprocess.run([sys.executable, script, "--all"],
+                           cwd=REPO_ROOT, capture_output=True, text=True)
+    ok &= check("--all deliberately excludes the history scan",
+                "history check" not in every.stdout)
     return ok
 
 
