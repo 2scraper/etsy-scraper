@@ -51,9 +51,24 @@ FABRICATION_MARKERS = ("sample-product-", "example brand", "sample product",
 # build red for no reason. It happened on the first run.)
 CREDENTIALLED_URL = re.compile(r"(?:ws|wss|https?)://[^\s\"'/]+:[^\s\"'/]+@")
 
-# Documented placeholders, which are supposed to look like the real thing.
-CREDENTIAL_ALLOWED = ("USER:PASS", "user:pass", "ACCOUNT:PASSWORD", "{login}",
-                      "***", "password}@", "u:p@h", "LOGIN:PASSWORD")
+# Documented placeholders and test values, which are SUPPOSED to look like the
+# real thing — that is the point of them. Each entry earns its place by being
+# in a line whose job is to show the shape of a credential or to prove the
+# masker removes one; a real secret matches none of these.
+#
+# Kept as an explicit list rather than a loose pattern so that adding one is a
+# decision. The alternative — a regex broad enough to cover them all — would
+# also cover a real login.
+CREDENTIAL_ALLOWED = (
+    # documentation placeholders
+    "USER:PASS", "user:pass", "ACCOUNT:PASSWORD", "LOGIN:PASSWORD",
+    "{login}", "{user}", "password}@", "***", "u:p@h",
+    "login:password@host:port",     # the shape a refusal message prints
+    "user:secret@",                 # the proxy-pool masking fixtures
+    "u:supersecret@", "login:supersecret@",   # the redaction fixtures
+    "u:pass@h1", "u:pass@h2",       # the global-masking fixture
+    "only:1",                       # a one-exit pool fixture
+)
 
 # A 2captcha API key is a 32-character hex string.
 HEX32 = re.compile(r"\b[0-9a-f]{32}\b")
