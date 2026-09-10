@@ -228,6 +228,11 @@ anything about the code.
 | `selenium_scraper.py` | **not with a credentialed endpoint** | chromedriver's `debuggerAddress` is a bare `host:port` with nowhere to put a password, so it cannot use the Scraping Browser API — and `--proxy-server` cannot authenticate a proxy either. It refuses up front with that reason rather than failing somewhere further in |
 | `scraper_api_client.py` | no | browserless, and its own exit is a datacentre address. Measured: upstream HTTP 403 |
 
+One caveat on the second engine, since the table above recommends it as a
+working path: **pyppeteer is effectively unmaintained** — its own README
+points readers at Playwright. It works here and is covered by the same
+suite, but Playwright is the one to reach for unless you have a reason.
+
 So Selenium is here for parity of behaviour — it makes the same decisions,
 reports the same exit codes and is checked by the same suite — but on a site
 whose only working access path is an authenticated remote browser, it has no
