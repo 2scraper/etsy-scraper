@@ -4,6 +4,7 @@ Etsy listing scraper — search results, category listings, shop fronts and
 listing pages — with three interchangeable browser engines, DataDome-aware
 blocking, JSON/CSV output and a run-metadata sidecar.
 
+[![release](https://img.shields.io/github/v/release/2scraper/etsy-scraper?sort=semver)](https://github.com/2scraper/etsy-scraper/releases)
 [![tests](https://github.com/2scraper/etsy-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/etsy-scraper/actions/workflows/tests.yml)
 [![canary (on demand)](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml/badge.svg)](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue?logo=python&logoColor=white)
