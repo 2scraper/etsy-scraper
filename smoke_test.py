@@ -2698,6 +2698,30 @@ def test_captcha():
     return ok
 
 
+def _placeholder_reads_unset(raw):
+    """Whether env_config would treat `raw` as "not configured".
+
+    Goes through the real rule — `env_config.env_value`, which is where the
+    placeholder logic lives — rather than reimplementing it, because a
+    reimplementation is what drifts. The variable is set in os.environ
+    directly and restored afterwards: `load_env` only fills variables that
+    are not already set, so writing a temporary .env would be shadowed by
+    whatever the suite has already loaded.
+    """
+    name = "ETSY_CDP_ENDPOINT"
+    saved = os.environ.get(name)
+    try:
+        os.environ[name] = raw
+        with io.StringIO() as buf, redirect_stdout(buf):
+            value = env_config.env_value(name)
+    finally:
+        if saved is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = saved
+    return value is None
+
+
 def test_env_config():
     group("env_config")
     ok = True
@@ -2724,6 +2748,33 @@ def test_env_config():
     # that looks configurable and is not.
     ok &= check("no env variable is mapped onto --out (it has a default)",
                 "out" not in env_config.ENV_KEYS.values())
+
+    # A COPIED .env.example MUST READ AS UNSET, and a literal-only check is
+    # not enough to make that true. This repo documents its two credentialled
+    # URLs the way the vendor does, with the parts you fill in in braces:
+    #
+    #     ws://{login}-zone-scraping_browser-…-pid-{profileId}:{password}@…
+    #     http://{user}:{password}@na.proxy.2captcha.com:2334
+    #
+    # Before the brace check existed the loader reported both of those as
+    # CONFIGURED, so `cp .env.example .env` and a run connected to
+    # cb.2captcha.com with the string `{login}-zone-…` as its username and
+    # got a 401 — a confusing failure a long way from its cause.
+    for raw in ('ws://{login}-zone-scraping_browser-country-us-pid-'
+                '{profileId}:{password}@cb.2captcha.com:9222',
+                'http://{user}:{password}@na.proxy.2captcha.com:2334',
+                'your_2captcha_api_key_here'):
+        ok &= check("a placeholder value reads as unset: %s..." % raw[:34],
+                    _placeholder_reads_unset(raw))
+    # ...and a REAL value still reads as set, or the guard has eaten the
+    # feature it was protecting.
+    ok &= check("a real value is not mistaken for a placeholder",
+                _placeholder_reads_unset(
+                    "ws://acct1-zone-scraping_browser-country-us-pid-p1:"
+                    "secret@cb.2captcha.com:9222") is False)
+    ok &= check("the example's default URL is usable as-is",
+                _placeholder_reads_unset(
+                    "https://www.etsy.com/search?q=handmade+mug") is False)
 
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, ".env")
@@ -3198,6 +3249,40 @@ def test_datadome_policy_is_shared():
                 page_flow.DATADOME_SOLVE_IS_OPT_IN is True)
     ok &= check("at most one solve is bought per page",
                 page_flow.SOLVES_PER_PAGE == 1)
+
+    # A POLICY CONSTANT NOTHING READS IS THE SAME DEFECT AS DEAD CODE.
+    # `RETRY_ON_BLOCKED` carried a paragraph of justification and no engine
+    # consulted it — they computed their block-retry budget from
+    # `BLOCK_RETRIES_WITHOUT_POOL` alone, so setting it False would have
+    # changed nothing.
+    for f in ENGINE_FILES:
+        path = os.path.join(REPO_ROOT, f)
+        if not os.path.exists(path):
+            continue
+        src = open(path, encoding="utf-8").read()
+        ok &= check("%s consults RETRY_ON_BLOCKED, not just "
+                    "BLOCK_RETRIES_WITHOUT_POOL" % f,
+                    "page_flow.RETRY_ON_BLOCKED" in src
+                    and "page_flow.BLOCK_RETRIES_WITHOUT_POOL" in src)
+
+    # `--fp-tags` MUST DEFAULT TO ONE OS-FAMILY TAG. It shipped as
+    # "Windows,Chrome,Desktop", which the fingerprint API rejects with HTTP
+    # 400 — so --fingerprint failed on every invocation, while
+    # fingerprint_client.py's own --tags help said ONE tag all along.
+    # Measured against the live API on 2026-09-10: `Windows` succeeds, and
+    # `Windows,Chrome,Desktop`, `Chrome` and `Desktop` each 400.
+    for f in ENGINE_FILES:
+        path = os.path.join(REPO_ROOT, f)
+        if not os.path.exists(path):
+            continue
+        m = re.search(r'--fp-tags"\s*,\s*default="([^"]*)"',
+                      open(path, encoding="utf-8").read())
+        if m is None:
+            continue
+        ok &= check("%s's --fp-tags default is ONE tag the API accepts" % f,
+                    "," not in m.group(1)
+                    and m.group(1) in ("Windows", "Microsoft Windows",
+                                       "Android"))
     ok &= check("the cookie domain comes from the page, not from the API",
                 page_flow.datadome_cookie_domain(
                     "https://www.etsy.com/de/search?q=x") == ".etsy.com")
