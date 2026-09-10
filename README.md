@@ -29,6 +29,13 @@ here so you can tell what has moved since.
 | Browserless HTTP fetch (2Captcha Scraper API) | upstream HTTP 403 |
 | **2Captcha Scraping Browser API, fresh profile** | **HTTP 200, 1.3 MB, 64 listings** |
 
+One practical note on the endpoint: **check that `country-` is honoured on
+your zone.** On the first zone tested it was not — three fresh `pid`s with
+`country-us` all returned German exits, so every capture was the German
+storefront. A second zone honoured it (a Comcast residential address in the
+US). The row's own `url` and `currency` are what tell you which storefront
+answered; do not trust the login string.
+
 Two things follow, and they are the opposite of what most repos in this
 family need:
 
@@ -300,12 +307,33 @@ site rather than the scraper.
   `price_is_from`, because the listing has variations and Etsy prints
   "ab 34,00 €" / "from $34.00". Its structured counterpart is an
   `AggregateOffer` with `lowPrice`/`highPrice` and **no `price` key at all**.
-* **The locale is a path prefix, and your exit IP can override it.** Every
-  market lives on `www.etsy.com` (`/de/`, `/uk/`, `/ca-fr/`, 27 of them), so
-  there is no `--country` flag. But a request for `/fr/…` from a German exit
-  was **redirected to `/de/…`**, canonical and all. The currency follows the
-  storefront you actually got, which is why `currency` is read from the page
-  and never defaulted.
+* **The locale is a path prefix, and your exit IP decides it.** Every market
+  lives on `www.etsy.com` (`/de/`, `/uk/`, `/ca-fr/`, 27 of them), so there is
+  no `--country` flag. A request for `/fr/…` from a German exit came back as
+  `/de/…`, canonical and all. The currency follows the storefront you actually
+  got, which is why `currency` is read from the page and never defaulted.
+
+  **Verified on two storefronts.** The same shop, captured from a US exit and
+  a German one on 2026-09-10, 39 listings present in both:
+
+  | | US exit | German exit |
+  |---|---|---|
+  | `lang` | `en-US` | `de` |
+  | `currency` | USD 39/39 | EUR 39/39 |
+  | the same mug | $33.50 | €35.84 |
+  | `shop_location` | `Wooster, Ohio` | `Ohio, Vereinigte Staaten` |
+  | `material` (detail) | `Ceramic` | `Keramik` |
+  | `free_shipping` (detail) | `null` — the page publishes no shipping rate | `true` |
+
+  `sku`, `brand`, `shop_id` and `ships_from` were identical, as they must be.
+  Titles matched on 35 of 39 — **Etsy translates some listing titles.**
+
+  Prices differed by a constant 0.935 ratio, which is the exchange rate
+  rather than the seller. **So a diff across two storefronts is meaningless,
+  and `diff_runs.py` now refuses one** — it cannot use `source` for that the
+  way the sibling repos do, because `source` is `etsy.com` on both sides. It
+  compares the rows' currencies instead, and `--force` remains the escape
+  hatch.
 * **A handful of listings publish a price Etsy does not print.** 5 of 64 rows
   on a live category page carry `offers.price` 15–20% below the figure on the
   tile, with the tile's figure repeated as a `priceSpecification` ListPrice

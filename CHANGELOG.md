@@ -13,6 +13,67 @@ with it, so nobody discovers it from a bill or from a diff.
 
 ## [Unreleased]
 
+### The second storefront, verified — and a guard the family's own one cannot provide
+
+§15 of the family notes asks for a SECOND country site, and the first
+Scraping Browser zone could not give one: three fresh `pid`s with
+`country-us` all returned German exits. A second zone honoured it, so the US
+storefront is now captured and pinned.
+
+What that turned up:
+
+| | US exit | German exit |
+|---|---|---|
+| `lang` | `en-US` | `de` |
+| `currency` | USD 39/39, from a bare `$` | EUR 39/39 |
+| the same mug | $33.50 | €35.84 |
+| `shop_location` | `Wooster, Ohio` | `Ohio, Vereinigte Staaten` |
+| `material` (detail) | `Ceramic` | `Keramik` |
+| `free_shipping` (detail) | `null` — no shipping rate published | `true` |
+
+`sku`, `brand`, `shop_id`, `ships_from`, `rating` and `in_stock` were
+identical, as they must be. Titles matched on 35 of 39: **Etsy translates
+some listing titles.**
+
+**`diff_runs.py` now refuses a cross-storefront comparison.** The sibling
+repos guard this with `source` — eleven country hostnames — but Etsy is ONE
+host, so `source` is `etsy.com` on both sides and the family's protection
+silently did not apply. Measured before the fix: diffing the same shop's two
+storefronts reported **39 of 39 listings as changed**, at a constant 0.935
+ratio that is the exchange rate rather than the seller, and exited 0.
+`--fail-on-change` would have fired on a catalogue that had not moved.
+
+The guard compares the rows' currencies, refuses a run that holds more than
+one (a run redirected mid-way is not even comparable with itself), and keeps
+`--force` as the escape hatch. All three directions are pinned by tests,
+including that a same-storefront diff still finds a real price change —
+refusing everything would pass a naive check and break the tool.
+
+### Verified, not assumed
+
+* **The ad signal now holds across two languages.** `ls=a` agreed with the
+  visible label 120/120 against English "Ad from shop", on top of 280/280
+  against German "Anzeige" — 400 for 400 in total. That is what makes it a
+  structural signal rather than one that happens to work on one locale.
+* **A bare `$` resolves to USD through the locale table**, and to `null` with
+  no locale — it is seven different currencies across Etsy's storefronts, so
+  it cannot name itself.
+* **Both decimal conventions are live**: `$34.87` on the US storefront,
+  `34,87 €` on the German one.
+* The two rating markups are a per-PAGE-KIND difference, not a per-locale
+  one: both storefronts' search pages use the custom element.
+
+### Added
+
+- US fixtures (a search page and a detail page, both scrubbed and both
+  verified to parse identically to their untrimmed originals) so the second
+  locale is covered offline, not only in a live run.
+- 35 checks over the above.
+
+---
+
+
+
 ### The DataDome fallback, wired — and measured
 
 `v0.1.0` shipped with the DataDome solve documented as "not covered". It is

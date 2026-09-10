@@ -39,6 +39,7 @@ than silently folded into "added"/"removed", which would be wrong on its face.
 
 import argparse
 import json
+import pathlib
 import re
 import sys
 from typing import Dict, List, Optional, Tuple
@@ -272,6 +273,43 @@ def _check_comparable(args) -> bool:
             f"the two runs are different modes ({modes}). A listing row and a "
             f"detail row carry different fields, so `added`/`removed` would "
             f"describe the mode change rather than the catalogue.")
+
+    # DIFFERENT STOREFRONTS, WHICH `source` CANNOT CATCH ON THIS SITE.
+    #
+    # The sibling repos guard this with `source`: eleven country hostnames,
+    # so a run of mediamarkt.at against mediamarkt.de is refused on the
+    # hostname alone. Etsy is ONE host — every market is a path prefix — so
+    # `source` is "etsy.com" on both sides and the family's protection
+    # silently does not apply here.
+    #
+    # The currency is what betrays it, and the artefact is total. Measured
+    # 2026-09-10 on one shop captured from a US exit and a German one, 39
+    # listings in both: every single row reported a price change, at a
+    # constant 0.935 ratio, because Etsy converts at a live rate. Four titles
+    # differed too, because Etsy translates some of them. `--fail-on-change`
+    # would have fired on a catalogue that had not moved at all.
+    currencies = {}
+    for label, path in (("--old", args.old), ("--new", args.new)):
+        try:
+            rows = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        seen = {r.get("currency") for r in rows if r.get("currency")}
+        if len(seen) == 1:
+            currencies[label] = seen.pop()
+        elif len(seen) > 1:
+            problems.append(
+                f"{label} ({path}) holds more than one currency ({sorted(seen)}) "
+                f"— that run was redirected mid-way and its own prices are not "
+                f"comparable with each other, let alone with another run's.")
+    if len(set(currencies.values())) > 1:
+        problems.append(
+            f"the two runs quote different currencies ({currencies}). Etsy "
+            f"serves a different storefront per exit country and converts "
+            f"prices at a live rate, so EVERY row would report a change that "
+            f"is the exchange rate rather than the seller. `source` cannot "
+            f"catch this on Etsy: it is 'etsy.com' for every storefront.")
+
     if not problems:
         return True
 
