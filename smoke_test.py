@@ -52,7 +52,7 @@ import textwrap
 import threading
 import builtins
 from contextlib import redirect_stdout
-from dataclasses import fields
+from dataclasses import asdict as dataclasses_asdict, fields
 
 import captcha_solver
 from captcha_solver import (CaptchaChallenge, detect_recaptcha_v3,
@@ -121,6 +121,414 @@ def page(*fragments):
             '%s</body></html>' % "".join(fragments))
 
 
+# THE SECOND STOREFRONT. /search?q=handmade+mug from a US residential exit,
+# 2026-09-10 — English, USD, and the same three roles as the German fixture
+# so the two can be compared field by field:
+#   4296141840  a SPONSORED tile, labelled "Ad from shop" in English
+#   1702915637  organic, discounted, confirmed by structured data
+#   4512181427  a 75%-off sale ($130 against $520), which is a real Etsy shape
+#
+# This is what the German captures could not test: a bare "$" resolving to
+# USD through the locale table, and the ad signal agreeing with an ENGLISH
+# label. Both are pinned below.
+US_SEARCH_FIXTURE = r"""<html lang="de"><head>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "ItemList", "numberOfItems": 199067, "itemListElement": [{"@type": "ListItem", "position": 1, "item": {"@type": "Product", "image": "https://i.etsystatic.com/19096197/r/il/00b10c/5918841167/il_fullxfull.5918841167_7pog.jpg", "name": "Solstice Mug: Handmade Pottery Mug with Sun Design, Ceramic Coffee Cup in a Variety of Colors", "url": "https://www.etsy.com/listing/1702915637/solstice-mug-handmade-pottery-mug-with", "brand": {"@type": "Brand", "name": "ShorProducts"}, "offers": {"@type": "Offer", "price": "34.87", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "priceSpecification": {"@type": "UnitPriceSpecification", "priceType": "https://schema.org/ListPrice", "price": "38.75", "priceCurrency": "USD"}}}}]}</script>
+</head><body>
+<img src="https://i.etsystatic.com/x/il_fullxfull.jpg"/>
+<div class="js-merch-stash-check-listing v2-listing-card wt-mr-xs-0 search-listing-card--desktop wt-height-full wt-display-flex-xs wt-flex-direction-column-xs wt-justify-content-space-between listing-card-experimental-style appears-ready" data-listing-card-v2="" data-listing-id="4296141840" data-page-type="search" data-palette-listing-id="4296141840" data-shop-id="7825028">
+<div class="listing-link wt-display-inline-block bdfe01948ca541107" data-display-loc="PLACEHOLDER" data-index="PLACEHOLDER" data-listing-id="4296141840" data-logging-key="PLACEHOLDER" data-palette-listing-image="PLACEHOLDER" data-shop-id="7825028">
+<a aria-label="Coffee Mug - KJ Pottery" class="v2-listing-card__img wt-position-relative listing-card-rounded-corners wt-display-block" data-display-loc="PLACEHOLDER" data-index="PLACEHOLDER" data-listing-id="4296141840" data-listing-link="" data-logging-key="PLACEHOLDER" data-seller-preview-nav-guard="true" data-sr-prefetch="PLACEHOLDER" href=PLACEHOLDER"https://www.etsy.com/listing/4296141840/coffee-mug-kj-pottery?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=a&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;frs=1&amp;etp=1&amp;sts=1" target="etsy.4296141840">
+<div class="placeholder listing-card-rounded-corners">
+<div class="placeholder vertically-centered-placeholder listing-card-rounded-corners">
+<img alt="Coffee Mug - KJ Pottery" class="wt-width-full wt-display-block listing-card-rounded-corners sc_gallery-1-1 wt-image--cover wt-image" data-clg-id="WtImage" data-listing-card-listing-image="" data-preload-lp-src="https://i.etsystatic.com/7825028/r/il/553467/6863380541/il_794xN.6863380541_5poq.jpg" data-preload-lp-srcset="https://i.etsystatic.com/7825028/r/il/553467/6863380541/il_794xN.6863380541_5poq.jpg 1x, https://i.etsystatic.com/7825028/r/il/553467/6863380541/il_1588xN.6863380541_5poq.jpg 2x" src="https://i.etsystatic.com/7825028/r/il/553467/6863380541/il_255x319.6863380541_5poq.jpg"/>
+</div>
+<div class="wt-position-absolute seller-preview-button-on-image" tabindex="0">
+<clg-button aria-describedby="ad-listing-title-4296141840" background-type="dark" data-close-label="Close seller preview" data-listing-id="4296141840" data-seller-preview-button="" data-seller-preview-data='{"seller_first_name":"Kelsey Jo","owner_of_label":"Owner of KJPottery","seller_avatar_url":"https:\/\/i.etsystatic.com\/iusa\/cf5903\/42985865\/iusa_90x90.42985865_btjh.jpg?version=0","avatar_color":"green","avatar_shape":"3","avatar_initial":"K","tenure_label":"13 years on Etsy","seller_sales_label":"20.7k sales","custom_orders_label":"Open to custom orders","ships_from_label":"Ships from Spokane, Washington","rec_image_urls":[]}' data-seller-preview-listener-attached="true" data-shop-id="7825028" data-shop-url="https://www.etsy.com/shop/KJPottery" hydrated="" size="small" title="Preview seller" type="button" variant="primary">
+<clg-icon name="eye" size="smaller"></clg-icon>
+<span class="wt-text-title-small">Preview seller</span>
+</clg-button>
+</div>
+</div>
+</a>
+<div class="v2-listing-card__info wt-mt-xs-1 wt-pt-xs-0">
+<div class="wt-display-flex-xs wt-align-items-center search-half-unit-my swatch-container">
+<a alt="Black" class="wt-circle wt-overflow-hidden wt-z-index-1 wt-mr-xs-1 swatch-link smaller" data-color-swatch="" data-sr-prefetch="PLACEHOLDER" data-variation-id="5528463188" href=PLACEHOLDER"https://www.etsy.com/listing/4296141840/coffee-mug-kj-pottery?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=a&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;frs=1&amp;etp=1&amp;sts=1&amp;variation0=5528463188" target="etsy.4296141840.5528463188">
+<div alt="Black" class="wt-circle wt-overflow-hidden wt-z-index-1 listing-card-swatch add-transparent-outline smaller hover-effect">
+</div>
+</a>
+<a alt="Tan" class="wt-circle wt-overflow-hidden wt-z-index-1 wt-mr-xs-1 swatch-link smaller" data-color-swatch="" data-sr-prefetch="PLACEHOLDER" data-variation-id="5367487358" href=PLACEHOLDER"https://www.etsy.com/listing/4296141840/coffee-mug-kj-pottery?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=a&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;frs=1&amp;etp=1&amp;sts=1&amp;variation0=5367487358" target="etsy.4296141840.5367487358">
+<div alt="Tan" class="wt-circle wt-overflow-hidden wt-z-index-1 listing-card-swatch add-transparent-outline smaller hover-effect">
+</div>
+</a>
+<a alt="Dark green" class="wt-circle wt-overflow-hidden wt-z-index-1 wt-mr-xs-1 swatch-link smaller" data-color-swatch="" data-sr-prefetch="PLACEHOLDER" data-variation-id="5347386175" href=PLACEHOLDER"https://www.etsy.com/listing/4296141840/coffee-mug-kj-pottery?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=a&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;frs=1&amp;etp=1&amp;sts=1&amp;variation0=5347386175" target="etsy.4296141840.5347386175">
+<div alt="Dark green" class="wt-circle wt-overflow-hidden wt-z-index-1 listing-card-swatch add-transparent-outline smaller hover-effect">
+</div>
+</a>
+<a alt="Yellow" class="wt-circle wt-overflow-hidden wt-z-index-1 wt-mr-xs-1 swatch-link smaller" data-color-swatch="" data-sr-prefetch="PLACEHOLDER" data-variation-id="5347386177" href=PLACEHOLDER"https://www.etsy.com/listing/4296141840/coffee-mug-kj-pottery?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=a&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;frs=1&amp;etp=1&amp;sts=1&amp;variation0=5347386177" target="etsy.4296141840.5347386177">
+<div alt="Yellow" class="wt-circle wt-overflow-hidden wt-z-index-1 listing-card-swatch add-transparent-outline smaller hover-effect">
+</div>
+</a>
+<a alt="Gray" class="wt-circle wt-overflow-hidden wt-z-index-1 wt-mr-xs-1 swatch-link smaller" data-color-swatch="" data-sr-prefetch="PLACEHOLDER" data-variation-id="5347386179" href=PLACEHOLDER"https://www.etsy.com/listing/4296141840/coffee-mug-kj-pottery?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=a&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;frs=1&amp;etp=1&amp;sts=1&amp;variation0=5347386179" target="etsy.4296141840.5347386179">
+<div alt="Gray" class="wt-circle wt-overflow-hidden wt-z-index-1 listing-card-swatch add-transparent-outline smaller hover-effect">
+</div>
+</a>
+<a alt="Blue" class="wt-circle wt-overflow-hidden wt-z-index-1 wt-mr-xs-1 swatch-link smaller" data-color-swatch="" data-sr-prefetch="PLACEHOLDER" data-variation-id="5347386183" href=PLACEHOLDER"https://www.etsy.com/listing/4296141840/coffee-mug-kj-pottery?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=a&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;frs=1&amp;etp=1&amp;sts=1&amp;variation0=5347386183" target="etsy.4296141840.5347386183">
+<div alt="Blue" class="wt-circle wt-overflow-hidden wt-z-index-1 listing-card-swatch add-transparent-outline smaller hover-effect">
+</div>
+</a>
+<span class="wt-text-grey wt-text-body-smaller swatch-counter">
+</span>
+</div>
+<a aria-label="" class="wt-z-index-1" data-display-loc="PLACEHOLDER" data-index="PLACEHOLDER" data-listing-id="" data-listing-link="" data-logging-key="PLACEHOLDER" data-sr-prefetch="PLACEHOLDER" href=PLACEHOLDER"https://www.etsy.com/listing/4296141840/coffee-mug-kj-pottery?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=a&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;frs=1&amp;etp=1&amp;sts=1" target="etsy.4296141840">
+<h3 class="wt-text-caption v2-listing-card__title wt-text-truncate search-half-unit-mb" id="ad-listing-title-4296141840" title="Coffee Mug - KJ Pottery">
+                    Coffee Mug - KJ Pottery
+                </h3>
+<div class="streamline-spacing-shop-rating">
+<div class="shop-name-with-rating wt-display-flex-xs flex-direction-row-xs wt-align-items-center">
+<span class="wt-display-flex-xs wt-flex-nowrap wt-align-items-center larger_review_stars">
+<clg-static-review-stars class="him-review-stars wt-pal-grid-mr-xs-050" rating="4.9" review-count-text="(3.5k)" size="smaller" variant="one-star"></clg-static-review-stars>
+</span>
+<div class="wt-flex-basis-lg-full wt-flex-basis-xl-auto wt star-badge-wrap-spacing wt-width-full min-width-0 wt-mt-xs-0">
+<p class="wt-text-caption wt-text-truncate wt-text-gray use_body_small_text wt-text-body-smaller streamline-seller-shop-name__line-height" data-seller-name-container="">
+<span aria-hidden="true">
+                        Ad<strong>・</strong>By <span class="wt-text-link clickable-shop-name" data-seller-name-link="" data-shop-url="https://www.etsy.com/shop/KJPottery?plkey=EuXTLBw8d-WMJE9ktmeWoyCa5N2e%3ALT28e267a675f3769f01b2988c777312312484420a">KJPottery<clg-icon class="wt-flex-shrink-xs-0 wt-vertical-align-text-top wt-sem-text-star-seller wt-ml-xs-05" data-star-seller-badge="true" name="starseller" size="smaller"></clg-icon></span>
+</span>
+<span class="wt-screen-reader-only">Ad from shop KJPottery</span>
+</p>
+</div>
+</div>
+</div>
+<div class="search-half-unit-mt"></div>
+<div class="n-listing-card__price wt-display-block wt-text-title-01 lc-price dense wt-display-inline-block">
+<p class="wt-text-title-01 lc-price dense wt-display-inline-block">
+<span class="currency-symbol">$</span><span class="currency-value">55.00</span>
+</p>
+</div>
+<div class="streamline-spacing-pricing-info">
+<div class="wt-signal-group wt-signal-group--horizontal" data-clg-id="WtSignalGroup">
+<span class="wt-signal wt-signal--generic-subtle" data-clg-id="WtSignal">
+  
+  Etsy’s Pick
+</span>
+<span aria-hidden="true" class="lc-signal-separator">·</span><span class="wt-signal wt-signal--generic-subtle" data-clg-id="WtSignal">
+  
+  Free shipping
+</span>
+</div>
+</div>
+</a>
+</div>
+</div>
+<div class="search-half-unit-mt wt-display-flex-xs wt-flex-wrap wt-align-items-center row-gap-2">
+<span class="wt-mr-xs-2"><form action="/cart/listing.php" class="wt-display-inline-block" data-logging-key="PLACEHOLDER" method="post">
+<input name="listing_id" type="hidden" value="4296141840"/>
+<input name="listing_title" type="hidden" value="Coffee Mug - KJ Pottery"/>
+<input name="listing_url" type="hidden" value="https://www.etsy.com/listing/4296141840/coffee-mug-kj-pottery"/>
+<input name="quantity" type="hidden" value="1"/>
+<input name="ref" type="hidden" value="search_lc_cart_pl"/>
+<input name="show_listing_disclaimer" type="hidden" value="true"/>
+<input name="show_cart_edit_panel" type="hidden" value="true"/>
+<input name="is_pl" type="hidden" value="true"/>
+<input name="listing_source" type="hidden" value="ads"/>
+<input name="logging_key" type="hidden" value="EuXTLBw8d-WMJE9ktmeWoyCa5N2e:LT28e267a675f3769f01b2988c777312312484420a"/>
+<input name="listing_image_url" type="hidden" value="https://i.etsystatic.com/7825028/r/il/553467/6863380541/il_372x296.6863380541_5poq.jpg"/>
+<input name="query" type="hidden" value="handmade mug"/>
+<input name="organic_listings_count" type="hidden" value="199067"/>
+<input name="formatted_original_price" type="hidden" value="$55.00"/>
+<input name="formatted_discounted_price" type="hidden" value=""/>
+<input name="percent_discount" type="hidden" value=""/>
+<input name="placement" type="hidden" value="wsg"/>
+<input name="use_listing_title_for_mlt" type="hidden" value="false"/>
+<input class="wt-display-none" name="_nnc" type="hidden" value="3:1789025451:QwAOMHv8ZPupKuHP3RrRdSBMK2ye:e720f9399acce047ee60fc013ff5ced38ede4d4e6067a7b844209b3065d89c14"/>
+<clg-button aria-describedby="ad-listing-title-4296141840" background-type="dynamic" class="" data-listing-card-add-to-cart="" hydrated="" size="small" type="submit" variant="secondary" with-submit="">
+<clg-icon name="add" size="smaller"></clg-icon>
+<span>Add to cart</span>
+</clg-button>
+</form></span>
+<span></span>
+<span class="wt-vertical-align-middle"><clg-text-link aria-describedby="ad-listing-title-4296141840" class="refine-by-listing-link wt-text-title-small--tight" data-more-like-this-button="" href=PLACEHOLDER"https://www.etsy.com/r/similar/4296141840/?ref=PLACEHOLDER" icon="end" rel="nofollow" target="_blank" title="More like this">
+        More like this
+        <clg-icon class="refine-by-listing-link-icon refine-by-listing-link-icon--end" name="rightarrow" size="smaller" slot="icon"></clg-icon>
+</clg-text-link></span>
+</div>
+<div class="v2-listing-card__actions wt-z-index-1 wt-position-absolute" data-favorite-button-wrapper="">
+
+</div>
+</div>
+<div class="js-merch-stash-check-listing v2-listing-card wt-mr-xs-0 search-listing-card--desktop wt-height-full wt-display-flex-xs wt-flex-direction-column-xs wt-justify-content-space-between listing-card-experimental-style appears-ready" data-listing-card-v2="" data-listing-id="4512181427" data-page-type="search" data-palette-listing-id="4512181427" data-shop-id="41859003">
+<div class="listing-link wt-display-inline-block bdfe01948ca541107" data-display-loc="PLACEHOLDER" data-index="PLACEHOLDER" data-listing-id="4512181427" data-logging-key="PLACEHOLDER" data-palette-listing-image="PLACEHOLDER" data-shop-id="41859003">
+<a aria-label="Set of 6 Natural Multi Green Onyx Whiskey Cups, Handmade Stone Whisky Glasses, Luxury Bourbon Tumbler Set, Gift for Him" class="v2-listing-card__img wt-position-relative listing-card-rounded-corners wt-display-block" data-display-loc="PLACEHOLDER" data-index="PLACEHOLDER" data-listing-id="4512181427" data-listing-link="" data-logging-key="PLACEHOLDER" data-seller-preview-nav-guard="true" data-sr-prefetch="PLACEHOLDER" href=PLACEHOLDER"https://www.etsy.com/listing/4512181427/set-6-pcs-handmade-onyx-coffee-cup-with?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=a&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;pro=1&amp;sts=1" target="etsy.4512181427">
+<div class="placeholder listing-card-rounded-corners" tabindex="-1">
+<div class="placeholder vertically-centered-placeholder listing-card-rounded-corners">
+<img alt="Set of 6 Natural Multi Green Onyx Whiskey Cups, Handmade Stone Whisky Glasses, Luxury Bourbon Tumbler Set, Gift for Him" class="wt-width-full wt-display-block listing-card-rounded-corners sc_gallery-1-2 wt-image--cover wt-image" data-clg-id="WtImage" data-listing-card-listing-image="" data-preload-lp-src="https://i.etsystatic.com/41859003/r/il/207144/8493711664/il_794xN.8493711664_f3xh.jpg" data-preload-lp-srcset="https://i.etsystatic.com/41859003/r/il/207144/8493711664/il_794xN.8493711664_f3xh.jpg 1x, https://i.etsystatic.com/41859003/r/il/207144/8493711664/il_1588xN.8493711664_f3xh.jpg 2x" src="https://i.etsystatic.com/41859003/r/il/207144/8493711664/il_255x319.8493711664_f3xh.jpg"/>
+</div>
+<div aria-hidden="true" class="listing-card-video-spinner wt-align-items-center wt-display-none wt-position-absolute wt-position-top wt-position-bottom wt-position-left wt-position-right">
+<div class="wt-spinner wt-spinner--01">
+<span class="etsy-icon"></span>
+        Loading
+    </div>
+</div>
+<div class="listing-card-video-container wt-animated wt-animated--disappear-01 wt-position-absolute wt-position-top wt-position-bottom wt-position-left wt-position-right listing-card-rounded-corners">
+
+</div>
+<div aria-hidden="false" class="listing-card-video-signal wt-position-absolute wt-circle wt-overflow-hidden wt-sem-bg-elevation-0">
+<clg-icon class="wt-horizontal-center wt-vertical-center" name="play" size="smaller"></clg-icon>
+</div>
+<div class="wt-position-absolute seller-preview-button-on-image" tabindex="0">
+<clg-button aria-describedby="ad-listing-title-4512181427" background-type="dark" data-close-label="Close seller preview" data-listing-id="4512181427" data-seller-preview-button="" data-seller-preview-data='{"seller_first_name":"KSMINERALS","owner_of_label":"Owner of KSMineralsExportBG","seller_avatar_url":"https:\/\/i.etsystatic.com\/iusa\/925ec2\/112353487\/iusa_90x90.112353487_8m2d.jpg?version=0","avatar_color":"purple","avatar_shape":"7","avatar_initial":"K","tenure_label":"3 years on Etsy","seller_sales_label":"4.8k sales","custom_orders_label":"Open to custom orders","ships_from_label":"Ships from Madan, Bulgaria","rec_image_urls":[]}' data-seller-preview-listener-attached="true" data-shop-id="41859003" data-shop-url="https://www.etsy.com/shop/KSMineralsExportBG" hydrated="" size="small" title="Preview seller" type="button" variant="primary">
+<clg-icon name="eye" size="smaller"></clg-icon>
+<span class="wt-text-title-small">Preview seller</span>
+</clg-button>
+</div>
+</div>
+</a>
+<div class="v2-listing-card__info wt-pt-xs-0">
+<a aria-label="" class="wt-z-index-1" data-display-loc="PLACEHOLDER" data-index="PLACEHOLDER" data-listing-id="" data-listing-link="" data-logging-key="PLACEHOLDER" data-sr-prefetch="PLACEHOLDER" href=PLACEHOLDER"https://www.etsy.com/listing/4512181427/set-6-pcs-handmade-onyx-coffee-cup-with?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=a&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;pro=1&amp;sts=1" target="etsy.4512181427">
+<h3 class="wt-text-caption v2-listing-card__title wt-text-truncate search-half-unit-mt wt-mt-xs-1 search-half-unit-mb" id="ad-listing-title-4512181427" title="Set of 6 Natural Multi Green Onyx Whiskey Cups, Handmade Stone Whisky Glasses, Luxury Bourbon Tumbler Set, Gift for Him">
+                    Set of 6 Natural Multi Green Onyx Whiskey Cups, Handmade Stone Whisky Glasses, Luxury Bourbon Tumbler Set, Gift for Him
+                </h3>
+<div class="streamline-spacing-shop-rating">
+<div class="shop-name-with-rating wt-display-flex-xs flex-direction-row-xs wt-align-items-center">
+<span class="wt-display-flex-xs wt-flex-nowrap wt-align-items-center larger_review_stars">
+<clg-static-review-stars class="him-review-stars wt-pal-grid-mr-xs-050" rating="4.9" review-count-text="(1.4k)" size="smaller" variant="one-star"></clg-static-review-stars>
+</span>
+<div class="wt-flex-basis-lg-full wt-flex-basis-xl-auto wt star-badge-wrap-spacing wt-width-full min-width-0 wt-mt-xs-0">
+<p class="wt-text-caption wt-text-truncate wt-text-gray use_body_small_text wt-text-body-smaller streamline-seller-shop-name__line-height" data-seller-name-container="">
+<span aria-hidden="true">
+                        Ad<strong>・</strong>By <span class="wt-text-link clickable-shop-name" data-seller-name-link="" data-shop-url="https://www.etsy.com/shop/KSMineralsExportBG?plkey=EuXTLBw8d-WMJE9ktmeWoyCa5N2e%3ALT297a0548d2a26c08bee25d2c8ac1f62e855bd11d">KSMineralsExportBG<clg-icon class="wt-flex-shrink-xs-0 wt-vertical-align-text-top wt-sem-text-star-seller wt-ml-xs-05" data-star-seller-badge="true" name="starseller" size="smaller"></clg-icon></span>
+</span>
+<span class="wt-screen-reader-only">Ad from shop KSMineralsExportBG</span>
+</p>
+</div>
+</div>
+</div>
+<div class="search-half-unit-mt"></div>
+<div class="n-listing-card__price wt-display-block wt-text-title-01 lc-price dense wt-display-inline-block">
+<p class="wt-text-slime wt-text-title-01 lc-price dense wt-display-inline-block">
+<span class="wt-screen-reader-only">
+                            Sale Price $130.00
+                        </span>
+<span aria-hidden="true">
+<span class="currency-symbol">$</span><span class="currency-value">130.00</span>
+</span>
+</p><p class="wt-text-caption search-collage-promotion-price search-collage-original-price wt-text-slime wt-text-truncate wt-no-wrap">
+<span aria-hidden="true" class="wt-text-strikethrough wt-text-black"><span class="currency-symbol">$</span><span class="currency-value">520.00</span></span>
+<span class="wt-screen-reader-only">
+                                    Original Price $520.00
+                                </span>
+<span class="wt-text-black">
+<span class="wt-text-grey">
+                                    (75% off)
+                                    </span>
+</span>
+</p>
+<p></p>
+</div>
+<div class="streamline-spacing-pricing-info streamline-spacing-reduce-margin">
+<div class="wt-signal-group wt-signal-group--horizontal" data-clg-id="WtSignalGroup">
+</div>
+</div>
+</a>
+</div>
+</div>
+<div class="search-half-unit-mt wt-display-flex-xs wt-flex-wrap wt-align-items-center row-gap-2">
+<span class="wt-mr-xs-2"><form action="/cart/listing.php" class="wt-display-inline-block" data-logging-key="PLACEHOLDER" method="post">
+<input name="listing_id" type="hidden" value="4512181427"/>
+<input name="listing_title" type="hidden" value="Set of 6 Natural Multi Green Onyx Whiskey Cups, Handmade Stone Whisky Glasses, Luxury Bourbon Tumbler Set, Gift for Him"/>
+<input name="listing_url" type="hidden" value="https://www.etsy.com/listing/4512181427/set-6-pcs-handmade-onyx-coffee-cup-with"/>
+<input name="quantity" type="hidden" value="1"/>
+<input name="ref" type="hidden" value="search_lc_cart_pl"/>
+<input name="show_listing_disclaimer" type="hidden" value="true"/>
+<input name="show_cart_edit_panel" type="hidden" value="true"/>
+<input name="is_pl" type="hidden" value="true"/>
+<input name="listing_source" type="hidden" value="ads"/>
+<input name="logging_key" type="hidden" value="EuXTLBw8d-WMJE9ktmeWoyCa5N2e:LT297a0548d2a26c08bee25d2c8ac1f62e855bd11d"/>
+<input name="listing_image_url" type="hidden" value="https://i.etsystatic.com/41859003/r/il/207144/8493711664/il_372x296.8493711664_f3xh.jpg"/>
+<input name="query" type="hidden" value="handmade mug"/>
+<input name="organic_listings_count" type="hidden" value="199067"/>
+<input name="formatted_original_price" type="hidden" value="$520.00"/>
+<input name="formatted_discounted_price" type="hidden" value="$130.00"/>
+<input name="percent_discount" type="hidden" value="75"/>
+<input name="placement" type="hidden" value="wsg"/>
+<input name="use_listing_title_for_mlt" type="hidden" value="false"/>
+<input class="wt-display-none" name="_nnc" type="hidden" value="3:1789025451:z69JWCFs9v2I0GTR7xUCV7TYAKWH:f9a2cf3b649ff96e68db4136667370231e0f1afce6e3afa544a600f76fc51aaa"/>
+<clg-button aria-describedby="ad-listing-title-4512181427" background-type="dynamic" class="" data-listing-card-add-to-cart="" hydrated="" size="small" type="submit" variant="secondary" with-submit="">
+<clg-icon name="add" size="smaller"></clg-icon>
+<span>Add to cart</span>
+</clg-button>
+</form></span>
+<span></span>
+<span class="wt-vertical-align-middle"><clg-text-link aria-describedby="ad-listing-title-4512181427" class="refine-by-listing-link wt-text-title-small--tight" data-more-like-this-button="" href=PLACEHOLDER"https://www.etsy.com/r/similar/4512181427/?ref=PLACEHOLDER" icon="end" rel="nofollow" target="_blank" title="More like this">
+        More like this
+        <clg-icon class="refine-by-listing-link-icon refine-by-listing-link-icon--end" name="rightarrow" size="smaller" slot="icon"></clg-icon>
+</clg-text-link></span>
+</div>
+<div class="v2-listing-card__actions wt-z-index-1 wt-position-absolute" data-favorite-button-wrapper="">
+
+</div>
+</div>
+<div class="js-merch-stash-check-listing v2-listing-card wt-mr-xs-0 search-listing-card--desktop wt-height-full wt-display-flex-xs wt-flex-direction-column-xs wt-justify-content-space-between listing-card-experimental-style appears-ready" data-listing-card-v2="" data-listing-id="1702915637" data-page-type="search" data-palette-listing-id="1702915637" data-shop-id="19096197">
+<div class="listing-link wt-display-inline-block b571c464f0986ce1f" data-display-loc="PLACEHOLDER" data-index="PLACEHOLDER" data-listing-id="1702915637" data-logging-key="PLACEHOLDER" data-palette-listing-image="PLACEHOLDER">
+<a aria-label="Solstice Mug: Handmade Pottery Mug with Sun Design, Ceramic Coffee Cup in a Variety of Colors" class="v2-listing-card__img wt-position-relative listing-card-rounded-corners wt-display-block" data-display-loc="PLACEHOLDER" data-index="PLACEHOLDER" data-listing-id="1702915637" data-listing-link="" data-logging-key="PLACEHOLDER" data-seller-preview-nav-guard="true" data-sr-prefetch="PLACEHOLDER" href=PLACEHOLDER"https://www.etsy.com/listing/1702915637/solstice-mug-handmade-pottery-mug-with?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=s&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;pro=1&amp;etp=1&amp;content_source=PLACEHOLDER" target="etsy.1702915637">
+<div class="placeholder listing-card-rounded-corners" tabindex="-1">
+<div class="placeholder vertically-centered-placeholder listing-card-rounded-corners">
+<img alt="Solstice Mug: Handmade Pottery Mug with Sun Design, Ceramic Coffee Cup in a Variety of Colors" class="wt-width-full wt-display-block listing-card-rounded-corners sr_gallery-1-1 wt-image--cover wt-image" data-clg-id="WtImage" data-listing-card-listing-image="" data-preload-lp-src="https://i.etsystatic.com/19096197/r/il/00b10c/5918841167/il_794xN.5918841167_7pog.jpg" data-preload-lp-srcset="https://i.etsystatic.com/19096197/r/il/00b10c/5918841167/il_794xN.5918841167_7pog.jpg 1x, https://i.etsystatic.com/19096197/r/il/00b10c/5918841167/il_1588xN.5918841167_7pog.jpg 2x" src="https://i.etsystatic.com/19096197/r/il/00b10c/5918841167/il_255x319.5918841167_7pog.jpg"/>
+</div>
+<div aria-hidden="true" class="listing-card-video-spinner wt-align-items-center wt-display-none wt-position-absolute wt-position-top wt-position-bottom wt-position-left wt-position-right">
+<div class="wt-spinner wt-spinner--01">
+<span class="etsy-icon"></span>
+        Loading
+    </div>
+</div>
+<div class="listing-card-video-container wt-animated wt-animated--disappear-01 wt-position-absolute wt-position-top wt-position-bottom wt-position-left wt-position-right listing-card-rounded-corners">
+
+</div>
+<div aria-hidden="false" class="listing-card-video-signal wt-position-absolute wt-circle wt-overflow-hidden wt-sem-bg-elevation-0">
+<clg-icon class="wt-horizontal-center wt-vertical-center" name="play" size="smaller"></clg-icon>
+</div>
+<div class="wt-position-absolute seller-preview-button-on-image" tabindex="0">
+<clg-button aria-describedby="listing-title-1702915637" background-type="dark" data-close-label="Close seller preview" data-listing-id="1702915637" data-seller-preview-button="" data-seller-preview-data='{"seller_first_name":"SH\u014cR Products","owner_of_label":"Owner of ShorProducts","seller_avatar_url":"https:\/\/i.etsystatic.com\/iusa\/d9bce6\/85519605\/iusa_90x90.85519605_ea3k.jpg?version=0","avatar_color":"purple","avatar_shape":"5","avatar_initial":"S","tenure_label":"5 years on Etsy","seller_sales_label":"4.6k sales","custom_orders_label":"Open to custom orders","ships_from_label":"Ships from Grand Rapids, Minnesota","rec_image_urls":[]}' data-seller-preview-listener-attached="true" data-shop-id="19096197" data-shop-url="https://www.etsy.com/shop/ShorProducts" hydrated="" size="small" title="Preview seller" type="button" variant="primary">
+<clg-icon name="eye" size="smaller"></clg-icon>
+<span class="wt-text-title-small">Preview seller</span>
+</clg-button>
+</div>
+</div>
+</a>
+<div class="v2-listing-card__info wt-mt-xs-1 wt-pt-xs-0">
+<div class="wt-display-flex-xs wt-align-items-center search-half-unit-my swatch-container">
+<a alt="Dark blue" class="wt-circle wt-overflow-hidden wt-z-index-1 wt-mr-xs-1 swatch-link smaller" data-color-swatch="" data-sr-prefetch="PLACEHOLDER" data-variation-id="4981481404" href=PLACEHOLDER"https://www.etsy.com/listing/1702915637/solstice-mug-handmade-pottery-mug-with?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=s&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;pro=1&amp;etp=1&amp;content_source=PLACEHOLDER&amp;variation0=4981481404" target="etsy.1702915637.4981481404">
+<div alt="Dark blue" class="wt-circle wt-overflow-hidden wt-z-index-1 listing-card-swatch add-transparent-outline smaller hover-effect">
+</div>
+</a>
+<a alt="Green" class="wt-circle wt-overflow-hidden wt-z-index-1 wt-mr-xs-1 swatch-link smaller" data-color-swatch="" data-sr-prefetch="PLACEHOLDER" data-variation-id="4803006659" href=PLACEHOLDER"https://www.etsy.com/listing/1702915637/solstice-mug-handmade-pottery-mug-with?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=s&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;pro=1&amp;etp=1&amp;content_source=PLACEHOLDER&amp;variation0=4803006659" target="etsy.1702915637.4803006659">
+<div alt="Green" class="wt-circle wt-overflow-hidden wt-z-index-1 listing-card-swatch add-transparent-outline smaller hover-effect">
+</div>
+</a>
+<a alt="Blue" class="wt-circle wt-overflow-hidden wt-z-index-1 wt-mr-xs-1 swatch-link smaller" data-color-swatch="" data-sr-prefetch="PLACEHOLDER" data-variation-id="4807181288" href=PLACEHOLDER"https://www.etsy.com/listing/1702915637/solstice-mug-handmade-pottery-mug-with?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=s&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;pro=1&amp;etp=1&amp;content_source=PLACEHOLDER&amp;variation0=4807181288" target="etsy.1702915637.4807181288">
+<div alt="Blue" class="wt-circle wt-overflow-hidden wt-z-index-1 listing-card-swatch add-transparent-outline smaller hover-effect">
+</div>
+</a>
+<a alt="Dark orange" class="wt-circle wt-overflow-hidden wt-z-index-1 wt-mr-xs-1 swatch-link smaller" data-color-swatch="" data-sr-prefetch="PLACEHOLDER" data-variation-id="4401266233" href=PLACEHOLDER"https://www.etsy.com/listing/1702915637/solstice-mug-handmade-pottery-mug-with?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=s&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;pro=1&amp;etp=1&amp;content_source=PLACEHOLDER&amp;variation0=4401266233" target="etsy.1702915637.4401266233">
+<div alt="Dark orange" class="wt-circle wt-overflow-hidden wt-z-index-1 listing-card-swatch add-transparent-outline smaller hover-effect">
+</div>
+</a>
+<a alt="Olive green" class="wt-circle wt-overflow-hidden wt-z-index-1 wt-mr-xs-1 swatch-link smaller" data-color-swatch="" data-sr-prefetch="PLACEHOLDER" data-variation-id="4807172242" href=PLACEHOLDER"https://www.etsy.com/listing/1702915637/solstice-mug-handmade-pottery-mug-with?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=s&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;pro=1&amp;etp=1&amp;content_source=PLACEHOLDER&amp;variation0=4807172242" target="etsy.1702915637.4807172242">
+<div alt="Olive green" class="wt-circle wt-overflow-hidden wt-z-index-1 listing-card-swatch add-transparent-outline smaller hover-effect">
+</div>
+</a>
+<span class="wt-text-grey wt-text-body-smaller swatch-counter">
+</span>
+</div>
+<a aria-label="" class="wt-z-index-1" data-display-loc="PLACEHOLDER" data-index="PLACEHOLDER" data-listing-id="" data-listing-link="" data-logging-key="PLACEHOLDER" data-sr-prefetch="PLACEHOLDER" href=PLACEHOLDER"https://www.etsy.com/listing/1702915637/solstice-mug-handmade-pottery-mug-with?click_key=PLACEHOLDER&amp;click_sum=PLACEHOLDER&amp;ls=s&amp;ga_order=most_relevant&amp;ga_search_type=all&amp;ga_view_type=gallery&amp;ga_search_query=PLACEHOLDER&amp;ref=PLACEHOLDER&amp;sr_prefetch=1&amp;pf_from=PLACEHOLDER&amp;pro=1&amp;etp=1&amp;content_source=PLACEHOLDER" target="etsy.1702915637">
+<h3 class="wt-text-caption v2-listing-card__title wt-text-truncate search-half-unit-mb" id="listing-title-1702915637" title="Solstice Mug: Handmade Pottery Mug with Sun Design, Ceramic Coffee Cup in a Variety of Colors">
+                    Solstice Mug: Handmade Pottery Mug with Sun Design, Ceramic Coffee Cup in a Variety of Colors
+                </h3>
+<div class="streamline-spacing-shop-rating">
+<div class="shop-name-with-rating wt-display-flex-xs flex-direction-row-xs wt-align-items-center">
+<span class="wt-display-flex-xs wt-flex-nowrap wt-align-items-center larger_review_stars">
+<clg-static-review-stars class="him-review-stars wt-pal-grid-mr-xs-050" rating="5.0" review-count-text="(1.1k)" size="smaller" variant="one-star"></clg-static-review-stars>
+</span>
+<div class="wt-flex-basis-lg-full wt-flex-basis-xl-auto wt star-badge-wrap-spacing wt-width-full min-width-0 wt-mt-xs-0">
+<p class="wt-text-caption wt-text-truncate wt-text-gray use_body_small_text wt-text-body-smaller streamline-seller-shop-name__line-height" data-seller-name-container="">
+<span aria-hidden="true">
+                        By <span class="wt-text-link clickable-shop-name" data-seller-name-link="" data-shop-url="https://www.etsy.com/shop/ShorProducts">ShorProducts</span>
+</span>
+<span class="wt-screen-reader-only">From shop ShorProducts</span>
+</p>
+</div>
+</div>
+</div>
+<div class="search-half-unit-mt"></div>
+<div class="n-listing-card__price wt-display-block wt-text-title-01 lc-price dense wt-display-inline-block">
+<p class="wt-text-slime wt-text-title-01 lc-price dense wt-display-inline-block">
+<span class="wt-screen-reader-only">
+                            Sale Price $34.87
+                        </span>
+<span aria-hidden="true">
+<span class="currency-symbol">$</span><span class="currency-value">34.87</span>
+</span>
+</p><p class="wt-text-caption search-collage-promotion-price search-collage-original-price wt-text-slime wt-text-truncate wt-no-wrap">
+<span aria-hidden="true" class="wt-text-strikethrough wt-text-black"><span class="currency-symbol">$</span><span class="currency-value">38.75</span></span>
+<span class="wt-screen-reader-only">
+                                    Original Price $38.75
+                                </span>
+<span class="wt-text-black">
+<span class="wt-text-grey">
+                                    (10% off)
+                                    </span>
+</span>
+</p>
+<p></p>
+</div>
+<div class="streamline-spacing-pricing-info streamline-spacing-reduce-margin">
+<div class="wt-signal-group wt-signal-group--horizontal" data-clg-id="WtSignalGroup">
+<span class="wt-signal wt-signal--generic-subtle" data-clg-id="WtSignal">
+  
+  Etsy’s Pick
+</span>
+</div>
+</div>
+</a>
+</div>
+</div>
+<div class="search-half-unit-mt wt-display-flex-xs wt-flex-wrap wt-align-items-center row-gap-2">
+<span class="wt-mr-xs-2"><form action="/cart/listing.php" class="wt-display-inline-block" data-logging-key="PLACEHOLDER" method="post">
+<input name="listing_id" type="hidden" value="1702915637"/>
+<input name="listing_title" type="hidden" value="Solstice Mug: Handmade Pottery Mug with Sun Design, Ceramic Coffee Cup in a Variety of Colors"/>
+<input name="listing_url" type="hidden" value="https://www.etsy.com/listing/1702915637/solstice-mug-handmade-pottery-mug-with"/>
+<input name="quantity" type="hidden" value="1"/>
+<input name="ref" type="hidden" value="search_lc_cart_og"/>
+<input name="show_listing_disclaimer" type="hidden" value="true"/>
+<input name="show_cart_edit_panel" type="hidden" value="true"/>
+<input name="is_pl" type="hidden" value="false"/>
+<input name="listing_source" type="hidden" value="search"/>
+<input name="logging_key" type="hidden" value="3d93e4f0-fd4c-4ce1-bd4d-190c14545b56:LT3d2374055c667a7677b246bf7a6c10a92ade8f2f"/>
+<input name="listing_image_url" type="hidden" value="https://i.etsystatic.com/19096197/r/il/00b10c/5918841167/il_372x296.5918841167_7pog.jpg"/>
+<input name="query" type="hidden" value="handmade mug"/>
+<input name="organic_listings_count" type="hidden" value="199067"/>
+<input name="formatted_original_price" type="hidden" value="$38.75"/>
+<input name="formatted_discounted_price" type="hidden" value="$34.87"/>
+<input name="percent_discount" type="hidden" value="10"/>
+<input name="placement" type="hidden" value="wsg"/>
+<input name="use_listing_title_for_mlt" type="hidden" value="false"/>
+<input class="wt-display-none" name="_nnc" type="hidden" value="3:1789025451:61JK-CkysC44MKS-ql9zF9GeOvIg:f00a97a628a07e83a47d2b8a182d321b17dd71017a6ee019d505476df9225210"/>
+<clg-button aria-describedby="listing-title-1702915637" background-type="dynamic" class="" data-listing-card-add-to-cart="" hydrated="" size="small" type="submit" variant="secondary" with-submit="">
+<clg-icon name="add" size="smaller"></clg-icon>
+<span>Add to cart</span>
+</clg-button>
+</form></span>
+<span></span>
+<span class="wt-vertical-align-middle"><clg-text-link aria-describedby="listing-title-1702915637" class="refine-by-listing-link wt-text-title-small--tight" data-more-like-this-button="" href=PLACEHOLDER"https://www.etsy.com/r/similar/1702915637/?ref=PLACEHOLDER" icon="end" rel="nofollow" target="_blank" title="More like this">
+        More like this
+        <clg-icon class="refine-by-listing-link-icon refine-by-listing-link-icon--end" name="rightarrow" size="smaller" slot="icon"></clg-icon>
+</clg-text-link></span>
+</div>
+<div class="v2-listing-card__actions wt-z-index-1 wt-position-absolute" data-favorite-button-wrapper="">
+
+</div>
+</div>
+</body></html>"""
+# The same listing as LISTING_FIXTURE, from the US storefront. Its review
+# list is scrubbed the same way. Kept because it pins the fields that are
+# TRANSLATED rather than stable (material "Ceramic" vs "Keramik", the
+# breadcrumb category) and one that the US page simply does not publish
+# (`free_shipping`: its shippingDetails carries a shippingOrigin and NO
+# shippingRate, so None is the honest answer rather than a lost read).
+US_LISTING_FIXTURE = r"""<html lang="de"><head>
+<script type="application/ld+json">{"@type": "Product", "@context": "https://schema.org", "url": "https://www.etsy.com/listing/519688604/handthrown-pottery-mug", "name": "Handthrown Pottery Mug", "sku": "519688604", "description": "14-16 ounces or 10-12 ounces\nbulbous shaped coffee tea mug.  Simple, traditional, elegant.  Blue and Earth green.  Thumb rest.  This is the mug shape and sized most frequently used in our house, from the littlest cousin to the coffee loving French grandmother!  Food safe.  Microwave and dishwasher safe. Each mug varies slightly in size but are approximately 4 inches tall, the base is just over 2 inches and the top opening is just over 3 1/2 inches.", "image": [{"@type": "ImageObject", "@context": "https://schema.org", "author": "StonehousePotteryOH", "contentURL": "https://i.etsystatic.com/8740835/r/il/2537fd/7287100059/il_fullxfull.7287100059_hj1w.jpg", "thumbnail": "https://i.etsystatic.com/8740835/r/il/2537fd/7287100059/il_340x270.7287100059_hj1w.jpg"}, {"@type": "ImageObject", "@context": "https://schema.org", "author": "StonehousePotteryOH", "contentURL": "https://i.etsystatic.com/8740835/r/il/d8dd86/7287100067/il_fullxfull.7287100067_i29o.jpg", "thumbnail": "https://i.etsystatic.com/8740835/r/il/d8dd86/7287100067/il_340x270.7287100067_i29o.jpg"}, {"@type": "ImageObject", "@context": "https://schema.org", "author": "StonehousePotteryOH", "contentURL": "https://i.etsystatic.com/8740835/r/il/221f3d/1409835265/il_fullxfull.1409835265_erg5.jpg", "thumbnail": "https://i.etsystatic.com/8740835/r/il/221f3d/1409835265/il_340x270.1409835265_erg5.jpg", "description": "Blue and green Handthrown Pottery Mug"}, {"@type": "ImageObject", "@context": "https://schema.org", "author": "StonehousePotteryOH", "contentURL": "https://i.etsystatic.com/8740835/r/il/ac3727/2716760440/il_fullxfull.2716760440_dtuf.jpg", "thumbnail": "https://i.etsystatic.com/8740835/r/il/ac3727/2716760440/il_340x270.2716760440_dtuf.jpg", "description": "Blue and green Handthrown Pottery Mug"}, {"@type": "ImageObject", "@context": "https://schema.org", "author": "StonehousePotteryOH", "contentURL": "https://i.etsystatic.com/8740835/r/il/2b4ce4/2716760606/il_fullxfull.2716760606_r4r6.jpg", "thumbnail": "https://i.etsystatic.com/8740835/r/il/2b4ce4/2716760606/il_340x270.2716760606_r4r6.jpg", "description": "Blue and green Handthrown Pottery Mug"}, {"@type": "ImageObject", "@context": "https://schema.org", "author": "StonehousePotteryOH", "contentURL": "https://i.etsystatic.com/8740835/r/il/12bca6/7287100065/il_fullxfull.7287100065_704l.jpg", "thumbnail": "https://i.etsystatic.com/8740835/r/il/12bca6/7287100065/il_340x270.7287100065_704l.jpg"}, {"@type": "ImageObject", "@context": "https://schema.org", "author": "StonehousePotteryOH", "contentURL": "https://i.etsystatic.com/8740835/r/il/019498/7239137826/il_fullxfull.7239137826_gwof.jpg", "thumbnail": "https://i.etsystatic.com/8740835/r/il/019498/7239137826/il_340x270.7239137826_gwof.jpg"}, {"@type": "ImageObject", "@context": "https://schema.org", "author": "StonehousePotteryOH", "contentURL": "https://i.etsystatic.com/8740835/r/il/5b0308/7287100063/il_fullxfull.7287100063_jl3a.jpg", "thumbnail": "https://i.etsystatic.com/8740835/r/il/5b0308/7287100063/il_340x270.7287100063_jl3a.jpg"}], "category": "Home & Living < Kitchen & Dining < Drink & Barware < Drinkware < Mugs", "brand": {"@type": "Brand", "@context": "https://schema.org", "name": "StonehousePotteryOH"}, "logo": "https://i.etsystatic.com/8740835/r/isla/f10a52/38851706/isla_500x500.38851706_2x3sl6r2.jpg", "aggregateRating": {"@type": "AggregateRating", "ratingValue": "5.0", "reviewCount": 828}, "offers": {"@type": "Offer", "eligibleQuantity": 15, "price": "31.50", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "shippingDetails": {"@type": "OfferShippingDetails", "shippingOrigin": {"@type": "DefinedRegion", "addressCountry": "US", "addressRegion": "OH"}}}, "review": [{"@type": "Review", "reviewRating": {"@type": "Rating", "ratingValue": 5, "bestRating": 5}, "datePublished": "2026-09-09", "reviewBody": "REDACTED REVIEW TEXT — a real customer wrote here; the structure is kept, the words are not.", "author": {"@type": "Person", "name": "REDACTED REVIEWER"}}, {"@type": "Review", "reviewRating": {"@type": "Rating", "ratingValue": 5, "bestRating": 5}, "datePublished": "2026-09-09", "reviewBody": "REDACTED REVIEW TEXT — a real customer wrote here; the structure is kept, the words are not.", "author": {"@type": "Person", "name": "REDACTED REVIEWER"}}], "material": "Ceramic"}</script>
+</head><body>
+<img src="https://i.etsystatic.com/x/il_fullxfull.jpg"/>
+<div class="wt-display-flex-xs wt-align-items-center wt-flex-wrap appears-ready" data-buy-box-region="price" data-selector="price-only">
+<p class="wt-text-title-larger wt-mr-xs-1">
+<span class="wt-screen-reader-only">Price:</span>$31.50
+    </p>
+<div aria-live="assertive" class="wt-spinner wt-spinner--01 wt-display-none" data-buy-box-price-spinner="" data-clg-id="WtSpinner">
+<span class="wt-icon"></span>
+        Loading
+    </div>
+</div>
+</body></html>"""
+
 # URLs the fixtures were captured from. Kept as constants because several
 # checks need the SAME url a fixture came from — `category_from_url` and
 # `host_currency` both read it, and a mismatched pair would pin the wrong
@@ -132,6 +540,10 @@ SHOP_URL = "https://www.etsy.com/de/shop/StonehousePotteryOH"
 LISTING_URL = "https://www.etsy.com/de/listing/519688604/handthrown-pottery-mug"
 LISTING_VARIATIONS_URL = ("https://www.etsy.com/de/listing/1000079942/"
                           "handgemachter-irisierender-pailletten")
+# The US storefront carries NO locale prefix — that is what "the default
+# storefront" means on this site, and it is why `locale_of` returns "".
+US_SEARCH_URL = "https://www.etsy.com/search?q=handmade+mug"
+US_LISTING_URL = "https://www.etsy.com/listing/519688604/handthrown-pottery-mug"
 
 
 # ---------------------------------------------------------------------------
@@ -1192,6 +1604,88 @@ def test_price_parsing():
 
 
 # ---------------------------------------------------------------------------
+# The second storefront — what one locale can never tell you
+# ---------------------------------------------------------------------------
+def test_second_locale():
+    group("the US storefront: USD, English labels, and what is translated")
+    ok = True
+    us = {r.sku: r for r in parse_products(US_SEARCH_FIXTURE, US_SEARCH_URL)}
+    de = {r.sku: r for r in parse_products(SEARCH_FIXTURE, SEARCH_URL)}
+
+    # A BARE "$" RESOLVED THROUGH THE LOCALE TABLE. This is the check the
+    # German captures could not make, and the one most likely to be wrong: on
+    # Etsy "$" means seven different currencies across the storefronts, so it
+    # cannot be read as USD by itself — the URL has to say.
+    ok &= check("the default storefront has no locale prefix",
+                locale_of(US_SEARCH_URL) == "")
+    ok &= check("and it resolves to USD", host_currency(US_SEARCH_URL) == "USD")
+    ok &= check("every US row reads USD from a bare $",
+                us and all(r.currency == "USD" for r in us.values()))
+    ok &= check("every German row reads EUR",
+                de and all(r.currency == "EUR" for r in de.values()))
+    ok &= check("a bare $ with NO locale is None, not a defaulted USD",
+                product_parser._prices_in("$31.50")[1] is None)
+
+    # US price formatting is the OTHER decimal convention: $34.87 with a dot,
+    # against 34,87 € with a comma. Both live, both pinned.
+    ok &= check("US prices parse with a dot decimal",
+                us["1702915637"].price == 34.87)
+    ok &= check("a US sale keeps both figures the right way round",
+                (us["4512181427"].price, us["4512181427"].original_price)
+                == (130.0, 520.0))
+    ok &= check("and its discount is computed, not read",
+                us["4512181427"].discount_pct == 75.0)
+
+    # THE AD SIGNAL AGAINST AN ENGLISH LABEL. It was verified 280/280 against
+    # German text; this is the same structural parameter checked against
+    # "Ad from shop", which is what makes it a locale-independent signal
+    # rather than one that happens to work on one language.
+    ok &= check("the English-labelled ad tile is flagged",
+                us["4296141840"].is_ad is True)
+    ok &= check("an English organic tile is not",
+                us["1702915637"].is_ad is False)
+    ok &= check("the US fixture really does say 'Ad from shop'",
+                "Ad from shop" in US_SEARCH_FIXTURE)
+    ok &= check("and the German one really does say 'Anzeige'",
+                "Anzeige" in SEARCH_FIXTURE)
+
+    # The rating markup is the NEW form on both storefronts' search pages, so
+    # the two forms are a per-PAGE-KIND difference and not a per-locale one.
+    ok &= check("US search tiles use the custom-element rating markup",
+                "clg-static-review-stars" in US_SEARCH_FIXTURE)
+    ok &= check("US ratings are read", all(r.shop_rating is not None
+                                           for r in us.values()))
+
+    # WHICH FIELDS ARE STABLE ACROSS STOREFRONTS AND WHICH ARE NOT. Getting
+    # this wrong is what makes a cross-locale diff look like a catalogue
+    # change, and it is why diff_runs now refuses one.
+    a = parse_product_page(US_LISTING_FIXTURE, US_LISTING_URL)[0]
+    b = parse_product_page(LISTING_FIXTURE, LISTING_URL)[0]
+    for f in ("sku", "title", "brand", "rating", "in_stock", "ships_from"):
+        ok &= check("%s is identical across storefronts" % f,
+                    getattr(a, f) == getattr(b, f))
+    ok &= check("price differs (Etsy converts at a live rate)",
+                a.price != b.price)
+    ok &= check("currency differs", (a.currency, b.currency) == ("USD", "EUR"))
+    ok &= check("material is TRANSLATED, so it is not an identifier",
+                (a.material, b.material) == ("Ceramic", "Keramik"))
+    ok &= check("the breadcrumb category is translated too",
+                a.category != b.category and "Home & Living" in a.category)
+
+    # A NULL THAT IS THE PAGE'S SILENCE, NOT A LOST READ. The US listing's
+    # shippingDetails carries a shippingOrigin and NO shippingRate, so there
+    # is nothing to read; the German one publishes a rate of 0. Same listing,
+    # same parser, different storefront.
+    ok &= check("free_shipping is None where the US page does not say",
+                a.free_shipping is None)
+    ok &= check("and True where the German page publishes a zero rate",
+                b.free_shipping is True)
+    ok &= check("the US fixture really has no shippingRate",
+                "shippingRate" not in US_LISTING_FIXTURE)
+    return ok
+
+
+# ---------------------------------------------------------------------------
 # Sponsored listings — the locale trap
 # ---------------------------------------------------------------------------
 def test_ads():
@@ -2018,6 +2512,92 @@ def test_finish_run():
                     code == EXIT_PARTIAL)
         ok &= check("a partial run still writes what it got",
                     os.path.exists(p + "d.json"))
+    return ok
+
+
+def test_diff_refuses_cross_storefront():
+    group("diff_runs refuses two storefronts, which `source` cannot catch here")
+    ok = True
+
+    def write_run(prefix, rows, mode="shop"):
+        with open(prefix + ".json", "w", encoding="utf-8") as f:
+            json.dump(rows, f, ensure_ascii=False)
+        with open(prefix + ".meta.json", "w", encoding="utf-8") as f:
+            json.dump({"source": "etsy.com", "mode": mode, "status": "complete",
+                       "stop_reason": "completed", "pages_requested": 1,
+                       "pages_completed": 1, "pages_failed": [],
+                       "products": len(rows), "start_url": "u",
+                       "final_url": "u", "finished_at": "2026-09-10T00:00:00+00:00"},
+                      f)
+
+    def rows_of(fixture, url):
+        return [dataclasses_asdict(r) for r in parse_products(fixture, url)]
+
+    with tempfile.TemporaryDirectory() as td:
+        us = os.path.join(td, "us")
+        de = os.path.join(td, "de")
+        us_rows = rows_of(US_SEARCH_FIXTURE, US_SEARCH_URL)
+        de_rows = rows_of(SEARCH_FIXTURE, SEARCH_URL)
+        write_run(us, us_rows, mode="listing")
+        write_run(de, de_rows, mode="listing")
+
+        # THE GAP THIS CLOSES. The sibling repos guard a cross-market diff
+        # with `source` — eleven country hostnames. Etsy is one host, so both
+        # sidecars say "etsy.com" and that guard silently does not apply.
+        # Measured on one shop captured from both exits: 39 of 39 listings
+        # reported a price change, at a constant 0.935 ratio, because Etsy
+        # converts at a live rate. `--fail-on-change` would have fired on a
+        # catalogue that had not moved.
+        ok &= check("both sidecars really do say source=etsy.com",
+                    json.load(open(us + ".meta.json"))["source"]
+                    == json.load(open(de + ".meta.json"))["source"] == "etsy.com")
+
+        done = subprocess.run(
+            [sys.executable, "diff_runs.py", "--old", de + ".json",
+             "--new", us + ".json"],
+            cwd=REPO_ROOT, capture_output=True, text=True)
+        ok &= check("a EUR run against a USD run is REFUSED",
+                    done.returncode != 0)
+        ok &= check("and the refusal names the currencies",
+                    "different currencies" in done.stdout)
+        ok &= check("and explains why `source` cannot catch it",
+                    "etsy.com' for every storefront" in done.stdout
+                    or "every storefront" in done.stdout)
+
+        # --force is still the documented escape hatch.
+        forced = subprocess.run(
+            [sys.executable, "diff_runs.py", "--old", de + ".json",
+             "--new", us + ".json", "--force"],
+            cwd=REPO_ROOT, capture_output=True, text=True)
+        ok &= check("--force still compares them", forced.returncode == 0)
+
+        # AND A SAME-STOREFRONT DIFF STILL WORKS. Refusing everything would
+        # pass the check above and break the tool.
+        moved = [dict(r) for r in us_rows]
+        moved[0]["price"] = round((moved[0]["price"] or 0) + 1.25, 2)
+        us2 = os.path.join(td, "us2")
+        write_run(us2, moved, mode="listing")
+        same = subprocess.run(
+            [sys.executable, "diff_runs.py", "--old", us + ".json",
+             "--new", us2 + ".json"],
+            cwd=REPO_ROOT, capture_output=True, text=True)
+        ok &= check("a USD run against a USD run is compared",
+                    same.returncode == 0)
+        ok &= check("and it finds the one real price change",
+                    "1 changed" in same.stdout)
+
+        # A run that straddled two storefronts mid-way is refused on its own.
+        mixed = [dict(r) for r in us_rows]
+        mixed[0]["currency"] = "EUR"
+        mx = os.path.join(td, "mixed")
+        write_run(mx, mixed, mode="listing")
+        straddled = subprocess.run(
+            [sys.executable, "diff_runs.py", "--old", mx + ".json",
+             "--new", us + ".json"],
+            cwd=REPO_ROOT, capture_output=True, text=True)
+        ok &= check("a run holding two currencies is refused too",
+                    straddled.returncode != 0
+                    and "more than one currency" in straddled.stdout)
     return ok
 
 
@@ -3358,6 +3938,7 @@ def main() -> int:
     skips = []
 
     ok &= test_price_parsing()
+    ok &= test_second_locale()
     ok &= test_ads()
     ok &= test_ratings()
     ok &= test_tile_prices()
@@ -3372,6 +3953,7 @@ def main() -> int:
     ok &= test_writers()
     ok &= test_finish_run()
     ok &= test_diff()
+    ok &= test_diff_refuses_cross_storefront()
     ok &= test_captcha()
     ok &= test_env_config()
     ok &= test_proxy_pool()
