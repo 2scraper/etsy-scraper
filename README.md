@@ -4,6 +4,7 @@ Etsy listing scraper — search results, category listings, shop fronts and
 listing pages — with three interchangeable browser engines, DataDome-aware
 blocking, JSON/CSV output and a run-metadata sidecar.
 
+[![release](https://img.shields.io/github/v/release/2scraper/etsy-scraper?sort=semver)](https://github.com/2scraper/etsy-scraper/releases)
 [![tests](https://github.com/2scraper/etsy-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/etsy-scraper/actions/workflows/tests.yml)
 [![canary (on demand)](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml/badge.svg)](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue?logo=python&logoColor=white)
@@ -227,6 +228,11 @@ anything about the code.
 | **`puppeteer_scraper.py`** | **yes** | same, via `browserWSEndpoint`. Verified live: 123 rows over 2 pages, 100% priced |
 | `selenium_scraper.py` | **not with a credentialed endpoint** | chromedriver's `debuggerAddress` is a bare `host:port` with nowhere to put a password, so it cannot use the Scraping Browser API — and `--proxy-server` cannot authenticate a proxy either. It refuses up front with that reason rather than failing somewhere further in |
 | `scraper_api_client.py` | no | browserless, and its own exit is a datacentre address. Measured: upstream HTTP 403 |
+
+One caveat on the second engine, since the table above recommends it as a
+working path: **pyppeteer is effectively unmaintained** — its own README
+points readers at Playwright. It works here and is covered by the same
+suite, but Playwright is the one to reach for unless you have a reason.
 
 So Selenium is here for parity of behaviour — it makes the same decisions,
 reports the same exit codes and is checked by the same suite — but on a site

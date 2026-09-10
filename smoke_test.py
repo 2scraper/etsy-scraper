@@ -3484,8 +3484,18 @@ def test_ci_checks_is_actually_wired_up():
 def test_no_capture_leaks():
     group("no credentials or personal data in the committed fixtures")
     ok = True
-    fixtures = "\n".join(v for k, v in sorted(globals().items())
-                         if k.startswith("FIX_") and isinstance(v, str))
+    # Collected by SUFFIX, which is how this file names its fixtures. An
+    # earlier version asked for a "FIX_" PREFIX, matched nothing, and every
+    # check below passed against an empty string — 150 KB of committed real
+    # captures went unexamined while twelve checks reported green. The
+    # non-empty assertion underneath is the actual fix: a corpus check that
+    # can silently scan nothing is worse than no corpus check at all.
+    names = [k for k, v in sorted(globals().items())
+             if k.endswith("_FIXTURE") and isinstance(v, str)]
+    fixtures = "\n".join(globals()[k] for k in names)
+    ok &= check("the privacy checks below have fixtures to scan "
+                "(%d fixtures, %d chars)" % (len(names), len(fixtures)),
+                len(names) >= 8 and len(fixtures) > 50000)
     # Guarded with PATTERNS rather than with the literals a previous capture
     # happened to contain, so the NEXT capture is checked too. MediaMarkt's
     # pages embed a front-end configuration blob — a Sentry DSN, a Woosmap
@@ -3502,7 +3512,7 @@ def test_no_capture_leaks():
     }
     for label, pattern in patterns.items():
         hits = re.findall(pattern, fixtures)
-        ok &= check("the fixtures contain no %s" % label, not hits)
+        ok &= check("no %s in the fixtures" % label, not hits)
 
     # Etsy's OWN per-impression material, which a fresh capture brings with
     # it: a click-tracking key, its checksum, and the logging key that ties an
@@ -3522,7 +3532,7 @@ def test_no_capture_leaks():
     }
     for label, pattern in etsy_session.items():
         hits = re.findall(pattern, fixtures)
-        ok &= check("the fixtures carry no %s (scrub a new capture before "
+        ok &= check("no %s in the fixtures (scrub a new capture before "
                     "committing it)" % label, not hits)
 
     # The repo-wide grep CI runs, applied here too so a failure is local.
@@ -3574,9 +3584,23 @@ ENGINE_FILES = ("playwright_scraper.py", "puppeteer_scraper.py",
 def test_wording():
     group("wording and removed flags")
     ok = True
-    shipped = [f for f in os.listdir(REPO_ROOT)
-               if f.endswith((".py", ".md", ".txt", ".toml", ".yml", ".yaml"))
-               and f != os.path.basename(__file__)]
+    # Asked of GIT, so the scan reaches the workflows and the issue
+    # templates under .github/ — eight shipped files that an os.listdir of
+    # the repo ROOT silently missed, including the four a contributor is
+    # most likely to paste marketing wording into. Untracked scratch files
+    # and .pytest_cache/ are excluded for free by asking git.
+    listed = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT,
+                            capture_output=True, text=True)
+    if listed.returncode == 0 and listed.stdout.strip():
+        shipped = [f for f in listed.stdout.split("\n")
+                   if f.endswith((".py", ".md", ".txt", ".toml", ".yml", ".yaml"))
+                   and os.path.basename(f) != os.path.basename(__file__)]
+    else:  # not a git checkout (a release tarball): fall back to the root
+        shipped = [f for f in os.listdir(REPO_ROOT)
+                   if f.endswith((".py", ".md", ".txt", ".toml", ".yml", ".yaml"))
+                   and f != os.path.basename(__file__)]
+    ok &= check("the wording scan reaches beyond the repo root",
+                any(os.sep in f or "/" in f for f in shipped))
     for phrase in BANNED_PHRASES:
         offenders = []
         for f in shipped:

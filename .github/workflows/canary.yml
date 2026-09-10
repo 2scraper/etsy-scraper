@@ -3,8 +3,9 @@ name: canary
 # tests.yml (deliberately) never touches etsy.com — see its own header for
 # why. That leaves a real gap: a markup change on the site itself only shows
 # up when a user hits it and files an issue, while the offline badge stays
-# green throughout. This workflow is the other half — a real run, on a real
-# search URL, on a schedule — so a site-side break is caught here first.
+# green throughout. This workflow is the other half — a real run against a
+# real search URL — so a site-side break is caught here first. It runs ON
+# DEMAND rather than on a schedule, for the reason set out below.
 #
 # THIS CANARY CANNOT RUN FROM A BARE RUNNER, AND THAT IS NOT PESSIMISM.
 # ------------------------------------------------------------------------

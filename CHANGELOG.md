@@ -11,7 +11,54 @@ with it, so nobody discovers it from a bill or from a diff.
 
 ---
 
-## [Unreleased]
+## [0.2.0] — 2026-09-10
+
+> **Two changes an existing user will notice.** `diff_runs.py` now REFUSES to
+> compare two runs whose rows carry different currencies, where before it
+> compared them and reported every row as changed — if you diff a US run
+> against a European one in a pipeline, that pipeline now stops with a
+> message instead of producing a false alarm; `--force` restores the old
+> behaviour. And the canary no longer runs on a schedule: it is
+> `workflow_dispatch` only, so its badge reports the last run someone asked
+> for rather than last night's.
+
+### The canary runs on demand, not on a schedule
+
+The workflow needs a Scraping Browser endpoint, and the credential in one
+does not survive a day — so a nightly run would have gone red every night
+once it expired, and a check that is always red teaches everyone to ignore
+checks. The schedule is off, the badge says "on demand", and the file
+carries the two lines to uncomment the day a long-lived credential exists.
+
+Its exit-code handling was wrong in a way the schedule would have made
+loud: the job failed on ANY non-zero exit, so a blocked run (exit 3) or a
+refused endpoint (exit 5) — access conditions that test nothing about this
+code — reported the same red as a real defect. Those are now warnings that
+write "the canary did NOT test anything" into the run summary. Red is
+reserved for a crash, bad usage, or the case worth having a canary for at
+all: it got in, and parsed zero rows.
+
+### Fixed — checks that reported more than they did
+
+- **The fixture privacy check examined an empty string.** It collected its
+  corpus by a `FIX_` prefix while every fixture in the suite is named by
+  suffix, so twelve patterns — JWTs, session ids, click-tracking keys,
+  DataDome blobs — ran against `""` and all twelve passed over 150 KB of
+  committed captures that nothing had read. The captures are clean; with the
+  collection fixed all twelve still pass, now over 150,487 characters. What
+  changed is that we know it. An assertion underneath now fails if the
+  corpus is ever empty again.
+- **The banned-wording scan reached only the repo root**, leaving both
+  Claude workflows, `tests.yml`, `canary.yml` and the four issue templates
+  unscanned — the files most likely to attract product wording. It asks git
+  for the tracked list now.
+- **The canary's header described a schedule** its own body, forty lines
+  down, explains it does not have.
+- **The README did not say pyppeteer is effectively unmaintained**, though
+  the engine table recommends it as one of the two that reach Etsy.
+
+---
+
 
 ### The second storefront, verified — and a guard the family's own one cannot provide
 
@@ -293,4 +340,5 @@ them is fixed there too or reported:
   the repo. The check was red on exactly the machines most likely to be
   running it.
 
+[0.2.0]: https://github.com/2scraper/etsy-scraper/releases/tag/v0.2.0
 [0.1.0]: https://github.com/2scraper/etsy-scraper/releases/tag/v0.1.0
