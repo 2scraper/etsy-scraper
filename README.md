@@ -5,7 +5,7 @@ listing pages — with three interchangeable browser engines, DataDome-aware
 blocking, JSON/CSV output and a run-metadata sidecar.
 
 [![tests](https://github.com/2scraper/etsy-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/etsy-scraper/actions/workflows/tests.yml)
-[![canary](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml/badge.svg)](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml)
+[![canary (on demand)](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml/badge.svg)](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue?logo=python&logoColor=white)
 ![licence](https://img.shields.io/badge/licence-MIT-green)
 ![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20Puppeteer-blueviolet)
@@ -417,9 +417,18 @@ All four are separate 2Captcha products behind one key.
 
 ## What the canary badge means on this site
 
-`tests.yml` is offline and green means green. The **canary** is a real daily
-run against etsy.com, and on this site it has to distinguish two things that
-look the same from the outside:
+`tests.yml` is offline and green means green, on every push.
+
+The **canary** is a real run against etsy.com, and it runs **on demand
+rather than on a schedule** — dispatch it from the Actions tab with a fresh
+`ETSY_CDP_ENDPOINT` secret when the answer matters. The reason is the
+credential: a Scraping Browser endpoint on this account does not survive a
+day, and a daily cron against it would give either a permanently red badge or
+a permanently green one that had tested nothing. The second is worse, because
+green reads as "the parser still works".
+
+When it does run, it has to distinguish two things that look the same from
+the outside:
 
 | the run | the badge | why |
 |---|---|---|

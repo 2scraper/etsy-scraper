@@ -39,11 +39,26 @@ name: canary
 # its own CI; and an unset secret arrives as an empty string, which the
 # loader already treats as "not configured", so there is no commented-out
 # line for someone to forget to uncomment.
+# ON DEMAND, NOT ON A SCHEDULE — and that is forced by the credential rather
+# than chosen.
+#
+# A Scraping Browser endpoint on this account does not survive a day. A daily
+# cron against a credential with that lifetime produces one of two useless
+# outcomes: a red badge every day (if a dead endpoint fails the job), or a
+# green badge every day that has tested nothing (if it does not). The second
+# is the more dangerous, because green reads as "the parser still works".
+#
+# So the schedule is off. Dispatch it by hand, with a fresh secret, when the
+# answer matters — before a release, or when someone reports the parser
+# missing a column. That is honest about what the check covers: the offline
+# suite runs on every push and pins the parser against real captures; this
+# workflow is the only thing that can catch ETSY changing its markup, and it
+# runs when someone asks it to.
+#
+# Put the schedule back the day a long-lived credential exists:
+#     schedule:
+#       - cron: "23 6 * * *"
 on:
-  schedule:
-    # Once a day, off the hour, so it is not competing with everyone else's
-    # on-the-hour cron jobs for runner availability.
-    - cron: "23 6 * * *"
   workflow_dispatch:
 
 jobs:

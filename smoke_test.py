@@ -3378,6 +3378,18 @@ def test_canary_separates_access_from_defect():
 
     ok &= check("the reason access is not a defect is written down",
                 "ACCESS CONDITIONS ARE NOT DEFECTS" in wf)
+
+    # NO SCHEDULE, and the reason has to travel with the decision. A daily
+    # cron against a credential that does not survive a day gives either a
+    # permanently red badge or a permanently green one that tested nothing —
+    # and the green is worse, because it reads as "the parser still works".
+    # Restoring the cron is a legitimate change the day a long-lived
+    # credential exists; this check makes it a decision rather than a habit.
+    ok &= check("the canary has no cron schedule",
+                not re.search(r"^\s*-\s*cron:", wf, re.M))
+    ok &= check("it is dispatchable by hand", "workflow_dispatch:" in wf)
+    ok &= check("and the reason the schedule is off is written down",
+                "does not survive a day" in wf)
     ok &= check("the expired-secret case is named",
                 "expired" in wf.lower() and "refresh" in wf.lower())
     return ok
