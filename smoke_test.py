@@ -3310,6 +3310,91 @@ def test_pyppeteer_teardown_noise():
     return ok
 
 
+def test_canary_separates_access_from_defect():
+    group("the canary fails on defects and only WARNS on access conditions")
+    ok = True
+    wf_path = os.path.join(REPO_ROOT, ".github", "workflows", "canary.yml")
+    wf = open(wf_path, encoding="utf-8").read()
+
+    # The data checks must not run on a blocked or refused run: there is no
+    # output file, and a missing file would fail for the wrong reason.
+    ok &= check("the data checks are gated on the run having got in",
+                "steps.verdict.outputs.tested == 'true'" in wf)
+
+    # Extract the real interpret-the-exit-code script and run it under bash
+    # for every code, rather than asserting on the YAML text. What matters is
+    # whether the JOB FAILS, and only running it answers that.
+    try:
+        start = wf.index('          set -e\n          code=')
+        end = wf.index('          echo "tested=$tested" >> "$GITHUB_OUTPUT"')
+        end += len('          echo "tested=$tested" >> "$GITHUB_OUTPUT"')
+    except ValueError:
+        return check("the canary's exit-code script could be located", False)
+    script = "\n".join(line[10:] if line.startswith(" " * 10) else line
+                        for line in wf[start:end].splitlines())
+
+    # WHY EACH CODE LANDS WHERE IT DOES:
+    #   0  got in and parsed         -> pass, and the assertions then run
+    #   3  blocked before parsing    -> ACCESS. Measured intermittent per
+    #      profile on this site, so a daily red badge would be noise.
+    #   5  endpoint refused          -> ACCESS, and the commonest cause is an
+    #      EXPIRED SECRET. A credential is not forever; failing on it paints
+    #      the badge red every day until someone notices.
+    #   6  partial                   -> ACCESS, usually a mid-run block.
+    #   1  crashed                   -> DEFECT.
+    #   2  bad arguments             -> DEFECT (in the workflow itself).
+    #   4  served a page, ZERO rows  -> DEFECT, and precisely the regression
+    #      this canary exists to catch: the tile anchor moved.
+    expected = {0: "pass", 3: "warn", 5: "warn", 6: "warn",
+                1: "fail", 2: "fail", 4: "fail", 99: "fail"}
+    for code, want in sorted(expected.items()):
+        body = script.replace('code="${{ steps.run.outputs.exit_code }}"',
+                              'code="%d"' % code)
+        with tempfile.TemporaryDirectory() as td:
+            out_file = os.path.join(td, "gh_output")
+            summary = os.path.join(td, "gh_summary")
+            open(out_file, "w").close()
+            open(summary, "w").close()
+            done = subprocess.run(
+                ["bash", "-c", body], capture_output=True, text=True,
+                env=dict(os.environ, GITHUB_OUTPUT=out_file,
+                         GITHUB_STEP_SUMMARY=summary))
+            failed = done.returncode != 0
+            warned = "::warning::" in done.stdout
+            errored = "::error::" in done.stdout
+            wrote_summary = bool(open(summary, encoding="utf-8").read().strip())
+            tested = "tested=true" in open(out_file, encoding="utf-8").read()
+
+        if want == "pass":
+            got = not failed and not warned and not errored and tested
+        elif want == "warn":
+            # A warning must NOT read as a pass: it also has to say in the
+            # step summary that nothing was actually tested, and it must not
+            # claim `tested`.
+            got = not failed and warned and wrote_summary and not tested
+        else:
+            got = failed and errored
+        ok &= check("exit %-2d is treated as %s" % (code, want), got)
+
+    ok &= check("the reason access is not a defect is written down",
+                "ACCESS CONDITIONS ARE NOT DEFECTS" in wf)
+
+    # NO SCHEDULE, and the reason has to travel with the decision. A daily
+    # cron against a credential that does not survive a day gives either a
+    # permanently red badge or a permanently green one that tested nothing —
+    # and the green is worse, because it reads as "the parser still works".
+    # Restoring the cron is a legitimate change the day a long-lived
+    # credential exists; this check makes it a decision rather than a habit.
+    ok &= check("the canary has no cron schedule",
+                not re.search(r"^\s*-\s*cron:", wf, re.M))
+    ok &= check("it is dispatchable by hand", "workflow_dispatch:" in wf)
+    ok &= check("and the reason the schedule is off is written down",
+                "does not survive a day" in wf)
+    ok &= check("the expired-secret case is named",
+                "expired" in wf.lower() and "refresh" in wf.lower())
+    return ok
+
+
 def test_ci_checks_is_actually_wired_up():
     group("the repo's own checks are RUN, and still catch a real secret")
     ok = True
@@ -3962,6 +4047,7 @@ def main() -> int:
     ok &= test_datadome_solver()
     ok &= test_datadome_policy_is_shared()
     ok &= test_pyppeteer_teardown_noise()
+    ok &= test_canary_separates_access_from_defect()
     ok &= test_ci_checks_is_actually_wired_up()
     ok &= test_no_capture_leaks()
     ok &= test_wording()

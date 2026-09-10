@@ -5,7 +5,7 @@ listing pages — with three interchangeable browser engines, DataDome-aware
 blocking, JSON/CSV output and a run-metadata sidecar.
 
 [![tests](https://github.com/2scraper/etsy-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/etsy-scraper/actions/workflows/tests.yml)
-[![canary](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml/badge.svg)](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml)
+[![canary (on demand)](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml/badge.svg)](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue?logo=python&logoColor=white)
 ![licence](https://img.shields.io/badge/licence-MIT-green)
 ![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20Puppeteer-blueviolet)
@@ -414,6 +414,44 @@ site rather than the scraper.
   second creates a mismatch rather than better cover.
 
 All four are separate 2Captcha products behind one key.
+
+## What the canary badge means on this site
+
+`tests.yml` is offline and green means green, on every push.
+
+The **canary** is a real run against etsy.com, and it runs **on demand
+rather than on a schedule** — dispatch it from the Actions tab with a fresh
+`ETSY_CDP_ENDPOINT` secret when the answer matters. The reason is the
+credential: a Scraping Browser endpoint on this account does not survive a
+day, and a daily cron against it would give either a permanently red badge or
+a permanently green one that had tested nothing. The second is worse, because
+green reads as "the parser still works".
+
+When it does run, it has to distinguish two things that look the same from
+the outside:
+
+| the run | the badge | why |
+|---|---|---|
+| got in, data is right | green | |
+| got in, **parsed 0 rows** from a search that returns tens of thousands | **red** | the tile anchor moved. This is the regression the canary exists to catch |
+| got in, a column collapsed below its floor | **red** | same reason |
+| crashed, or the workflow's own arguments are wrong | **red** | |
+| **blocked** before parsing (`t=bv`) | green, with a **warning** | access, not code — measured intermittent per profile |
+| the **endpoint refused the connection** | green, with a **warning** | usually an expired secret |
+| no `ETSY_CDP_ENDPOINT` secret at all | green, with a **notice** | nothing to run |
+
+The three warning rows also write to the run's step summary in words: *the
+canary did not test anything this time.* That matters — a warning must not
+read as a pass, and a green badge from a blocked run is not evidence the
+parser still works.
+
+**Why not fail on a block?** Because it would be red most days for reasons
+that are nobody's bug. Measured 2026-09-09/10 on one account: a fresh profile
+served three full pages in the morning; that evening two fresh profiles were
+refused through all their retries while a third served a shop front in full,
+twice. Same code, same zone, same URLs. And a credential expires eventually,
+which would pin the badge red until someone noticed. A check that is always
+red teaches everyone to ignore checks.
 
 ## Comparing two runs
 

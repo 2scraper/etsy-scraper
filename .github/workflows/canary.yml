@@ -39,11 +39,26 @@ name: canary
 # its own CI; and an unset secret arrives as an empty string, which the
 # loader already treats as "not configured", so there is no commented-out
 # line for someone to forget to uncomment.
+# ON DEMAND, NOT ON A SCHEDULE — and that is forced by the credential rather
+# than chosen.
+#
+# A Scraping Browser endpoint on this account does not survive a day. A daily
+# cron against a credential with that lifetime produces one of two useless
+# outcomes: a red badge every day (if a dead endpoint fails the job), or a
+# green badge every day that has tested nothing (if it does not). The second
+# is the more dangerous, because green reads as "the parser still works".
+#
+# So the schedule is off. Dispatch it by hand, with a fresh secret, when the
+# answer matters — before a release, or when someone reports the parser
+# missing a column. That is honest about what the check covers: the offline
+# suite runs on every push and pins the parser against real captures; this
+# workflow is the only thing that can catch ETSY changing its markup, and it
+# runs when someone asks it to.
+#
+# Put the schedule back the day a long-lived credential exists:
+#     schedule:
+#       - cron: "23 6 * * *"
 on:
-  schedule:
-    # Once a day, off the hour, so it is not competing with everyone else's
-    # on-the-hour cron jobs for runner availability.
-    - cron: "23 6 * * *"
   workflow_dispatch:
 
 jobs:
@@ -118,22 +133,77 @@ jobs:
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Interpret the exit code
+        id: verdict
         if: env.HAVE_CDP == 'true'
+        # ACCESS CONDITIONS ARE NOT DEFECTS, and on this site that
+        # distinction decides whether the badge means anything.
+        #
+        # An earlier version failed the job on ANY non-zero exit. That makes
+        # the canary red for two things that are nobody's bug:
+        #
+        #   * the SECRET EXPIRED. A Scraping Browser credential is not
+        #     forever; when it stops authenticating the run exits 5, and a
+        #     daily cron then paints the badge red every day until someone
+        #     refreshes it. A check that is always red teaches everyone to
+        #     ignore checks, which is worse than having no check.
+        #   * ACCESS IS INTERMITTENT PER PROFILE. Measured 2026-09-09/10 on
+        #     one account: a fresh profile served three full pages in the
+        #     morning, and that evening two fresh profiles were refused with
+        #     t=bv through all their retries while a third served a shop
+        #     front in full, twice. Same code, same zone, same URLs.
+        #
+        # So: 3 (blocked), 5 (remote API error) and 6 (partial) are reported
+        # as WARNINGS and do not fail the job. What stays red is a run that
+        # got in and found the wrong thing, or one that broke:
+        #
+        #   1  crashed
+        #   2  the workflow's own arguments are wrong
+        #   4  served a page and parsed ZERO rows from a search that returns
+        #      tens of thousands — the tile anchor moved, which is exactly
+        #      what this canary exists to catch
+        #
+        # A warning must not read as a pass, either. Each one writes to the
+        # step summary as well, so the run page says in words that the canary
+        # did not actually test anything this time.
         run: |
+          set -e
           code="${{ steps.run.outputs.exit_code }}"
+          tested=true
           case "$code" in
-            0)   echo "OK — listings parsed from a live run." ;;
-            3)   echo "::error::Blocked before parsing (exit 3). Read the log for the DataDome 't' value: t=bv means the profile or its exit is banned and NO captcha solve can help — try a different --cdp-endpoint pid. t=fe means a solvable challenge appeared and no key was configured." ;;
-            4)   echo "::error::Ran fine but parsed 0 rows (exit 4) on a search that returns tens of thousands of listings. The tile anchor (data-listing-id) has probably moved. The HTML dump in the artifacts tells you." ;;
-            5)   echo "::error::Remote API error (exit 5). 'profile_locked' means another run still holds this pid — give CI its own, or wait. Otherwise the Scraping Browser endpoint refused the connection." ;;
-            6)   echo "::error::Partial run (exit 6) — some pages were gathered and then the run stopped early. canary_run.meta.json names which pages failed." ;;
-            2)   echo "::error::Bad usage (exit 2) — the workflow's own arguments are wrong, not the site." ;;
-            *)   echo "::error::Unexpected exit code $code (see the step above for the traceback)." ;;
+            0)
+              echo "OK — listings parsed from a live run." ;;
+            3)
+              tested=false
+              echo "::warning::Blocked before parsing (exit 3) — an ACCESS condition, not a code defect, so this run is not failed. Read the log for the DataDome 't' value: t=bv means the profile or its exit is banned and no captcha solve can help; t=fe means a solvable challenge appeared and no key was configured. Try a different --cdp-endpoint pid."
+              echo "### Canary did NOT test anything (exit 3, blocked)" >> "$GITHUB_STEP_SUMMARY"
+              echo "Etsy refused the request before any markup was parsed. The parser was not exercised. This is access, not a regression — but it also means the site-side check did not happen." >> "$GITHUB_STEP_SUMMARY" ;;
+            5)
+              tested=false
+              echo "::warning::Remote API error (exit 5) — the Scraping Browser endpoint refused the connection, so nothing was tested and this run is not failed. If the log says 'profile_locked', another run still holds this pid: give CI its own. Otherwise the ETSY_CDP_ENDPOINT secret has most likely expired and needs refreshing."
+              echo "### Canary did NOT test anything (exit 5, endpoint refused)" >> "$GITHUB_STEP_SUMMARY"
+              echo "The most likely cause is an expired \`ETSY_CDP_ENDPOINT\` secret. Refresh it, or remove it to go back to the explicit SKIP path." >> "$GITHUB_STEP_SUMMARY" ;;
+            6)
+              tested=false
+              echo "::warning::Partial run (exit 6) — some pages were gathered and the run then stopped early, usually a mid-run block. canary_run.meta.json names which pages failed. Not failed, because on this site that is an access condition; if it repeats on every run, suspect pagination instead."
+              echo "### Canary tested only PART of the run (exit 6)" >> "$GITHUB_STEP_SUMMARY"
+              echo "See \`pages_failed\` in the sidecar artefact." >> "$GITHUB_STEP_SUMMARY" ;;
+            4)
+              echo "::error::Ran fine but parsed 0 rows (exit 4) on a search that returns tens of thousands of listings. The tile anchor (data-listing-id) has probably moved — this is the regression this canary exists to catch. The HTML dump in the artefacts tells you."
+              exit 1 ;;
+            2)
+              echo "::error::Bad usage (exit 2) — the workflow's own arguments are wrong, not the site."
+              exit 1 ;;
+            *)
+              echo "::error::Unexpected exit code $code (see the step above for the traceback)."
+              exit 1 ;;
           esac
-          test "$code" = "0"
+          echo "tested=$tested" >> "$GITHUB_OUTPUT"
 
       - name: Sanity-check the scraped data
-        if: env.HAVE_CDP == 'true'
+        # Only when the run actually got in. On a blocked or refused run
+        # there is no output file to check, and a missing file would fail for
+        # the wrong reason.
+        if: env.HAVE_CDP == 'true' && steps.verdict.outputs.tested == 'true'
         # Exit 0 only means "some rows were written". It says nothing about
         # whether the page actually rendered: a snapshot taken too early still
         # writes rows, just with fields empty. Every floor below is set from a
