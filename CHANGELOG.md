@@ -11,6 +11,21 @@ with it, so nobody discovers it from a bill or from a diff.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **The Scraper API path (`scraper_api_client.py`) failed whenever a wait flag
+  was given, and never saw the target's status.** Measured 2026-09-23 against
+  the live `/tasks/sync` endpoint: `waitFor` sent as a JSON-encoded string
+  (what this client sent) is answered HTTP 422 "params.waitFor must be an
+  object" and is still billed ($0.0005); sent as an object it is answered
+  HTTP 200. It is now an object. And the response's `status` is the API's own
+  verdict ("success"), while the target site's HTTP code is `http_code` — the
+  client handed `status` onward, so a target 403/503 never reached the page
+  classifier. It now reads `http_code`, falling back to `status` only if that
+  is an integer. After the fix, one live call (`--wait-text mug` on the canary's search URL, no `--cdp-url`) was accepted — no 422 — but ran into the API's own sync-wait limit (HTTP 408, task still pending at the default 60 s), so no target status came back from that call to show.
+
 ## [0.2.3] — 2026-09-16
 
 ### Added
