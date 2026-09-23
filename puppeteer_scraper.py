@@ -9,9 +9,15 @@ spends money — the decisions that determine all three live in page_flow.py
 and output_writer.finish_run(), so this file is browser plumbing and nothing
 else.
 
-    --mode listing   (default)  category grids and search results
-    --mode product              one /product/ page, with brand, EAN,
-                                description and the full image list
+    --mode listing   (default)  search results (/search?q=...), category
+                                listings (/c/...) and /market/ pages,
+                                paginated
+    --mode product              one /listing/<id> page, with the shop, the
+                                material, shipping origin, description and
+                                the full image list
+    --mode shop                 one /shop/<name> front: that seller's
+                                catalogue as listing rows, plus the shop's
+                                own rating and location in the sidecar
 
 Two things to know before choosing this engine:
 
@@ -1021,10 +1027,17 @@ def parse_args():
                         "environment or in .env.")
     p.add_argument("--mode", choices=["listing", "product", "shop"],
                    default="listing",
-                   help="listing (default) or product. product reads one "
-                        "/product/ page and adds brand, EAN, description and "
-                        "the full image list — the columns a listing row "
-                        "cannot carry. No --pages in product mode.")
+                   help="listing (default): paginated search results "
+                        "(/search?q=...), a category listing (/c/...) or a "
+                        "/market/ page — around 64 listings per page. "
+                        "product: one /listing/<id> page, which adds the "
+                        "material, shipping origin, description and the full "
+                        "image list, and whose rating is the LISTING's rather "
+                        "than the shop's. shop: one /shop/<name> front — that "
+                        "seller's catalogue as listing rows, with the shop's "
+                        "own rating and location in the sidecar. --pages "
+                        "applies to listing and shop; there is one page to "
+                        "read in product mode.")
     p.add_argument("--category", default=None, help="Label to tag output rows with.")
     p.add_argument("--pages", type=int, default=1, help="Listing pages to crawl")
     p.add_argument("--delay", type=float, default=2.0, help="Delay between pages, seconds")

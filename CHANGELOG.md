@@ -25,6 +25,25 @@ with it, so nobody discovers it from a bill or from a diff.
   client handed `status` onward, so a target 403/503 never reached the page
   classifier. It now reads `http_code`, falling back to `status` only if that
   is an integer. After the fix, one live call (`--wait-text mug` on the canary's search URL, no `--cdp-url`) was accepted — no 422 — but ran into the API's own sync-wait limit (HTTP 408, task still pending at the default 60 s), so no target status came back from that call to show.
+- **`--help` for `--mode` in `selenium_scraper.py` and `puppeteer_scraper.py`
+  described mediamarkt-scraper's product mode** — "one /product/ page, with
+  brand, EAN, description" and "listing or product", while all three engines
+  take `listing`, `product` and `shop` and Etsy's detail page is
+  `/listing/<id>`. Both twins now carry the Playwright engine's help text and
+  module docstring for the three modes.
+- **The access badge said "needs a residential exit".** This README measures
+  a residential exit as NOT sufficient on its own (Playwright Chromium via a
+  residential US exit: 403, `t=bv`) and the Scraping Browser API as the path
+  that works, so the badge now says "needs Scraping Browser API".
+- **Leftovers from the donor repos in the issue templates and docs:** the
+  bug-report example wrote `--out grills` and expected Farfetch's "96
+  products"; it now uses `--out mugs` and the README's 184-row healthy run.
+  The site-change template described a JSON-LD-first parser, a
+  `lowest_price_30d` overlay (no such column here) and a "below 90%" DOM
+  confirmation; it now names `data-listing-id` as the primary anchor and the
+  per-page-kind confirmation floors. `SECURITY.md` named Akamai rather than
+  DataDome, and a comment in `output_writer.py` used MediaMarkt's
+  `/de/category/tv-audio-202.html` as its example of a page with no listings.
 
 ## [0.2.3] — 2026-09-16
 

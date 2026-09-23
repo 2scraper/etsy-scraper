@@ -286,9 +286,8 @@ EXIT_NO_PRODUCTS = 4
 # content". See product_parser.detect_bot_challenge.
 #
 # On Etsy this code specifically does NOT cover a page with no listings — a URL
-# like /de/category/tv-audio-202.html that answers 200 with a real page and
-# no product grid, because it is a landing page of sub-categories rather than
-# a listing. That is EXIT_NO_PRODUCTS: the request was served exactly as
+# like a taxonomy hub that answers 200 with a real page and no listing grid,
+# because it is a landing page of sub-categories rather than a listing. That is EXIT_NO_PRODUCTS: the request was served exactly as
 # asked and simply has no products on it. Reporting it as blocked would send
 # a user hunting for a proxy problem that does not exist.
 EXIT_BLOCKED = 3

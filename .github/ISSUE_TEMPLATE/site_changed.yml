@@ -9,8 +9,11 @@ body:
         own report because the fix is different from a code bug: something on
         etsy.com moved.
 
-        Useful to know before filing: the parser tries **JSON-LD first**, then a
-        CSS + URL-pattern fallback. Which one broke narrows the fix a lot.
+        Useful to know before filing: the primary anchor is Etsy's own
+        `data-listing-id` attribute, the JSON-LD `ItemList` only enriches and
+        cross-checks it (it is partial — 8 entries for 64 tiles on a search
+        page), and the `/listing/<id>/<slug>` URL pattern is the fallback.
+        Which one broke narrows the fix a lot.
 
   - type: dropdown
     id: what_broke
@@ -19,8 +22,8 @@ body:
       options:
         - Products (0 rows on a page that visibly has products)
         - A specific field is null or wrong (price, sku, image, URL)
-        - original_price or lowest_price_30d empty out (the tile overlay)
-        - DOM price confirmation dropped below 90% in the run log
+        - original_price or discount_pct empty out, or come out wrong
+        - The structured-price confirmation share warned below its per-page-kind floor in the run log
         - Pagination stops early or repeats a page
         - The captcha detector finds nothing on a page that has one
         - Something else
