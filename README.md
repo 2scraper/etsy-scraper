@@ -10,7 +10,7 @@ blocking, JSON/CSV output and a run-metadata sidecar.
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue?logo=python&logoColor=white)
 ![licence](https://img.shields.io/badge/licence-MIT-green)
 ![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20Puppeteer-blueviolet)
-![access](https://img.shields.io/badge/needs-a%20residential%20exit-orange)
+![access](https://img.shields.io/badge/needs-Scraping%20Browser%20API-orange)
 
 ---
 
