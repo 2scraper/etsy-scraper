@@ -37,6 +37,9 @@ with it, so nobody discovers it from a bill or from a diff.
   A smoke-test comment described "MediaMarkt's pages" without saying it was
   a sibling site; it now does.
 
+- `SECURITY.md` said this project has no releases or version tags; it has
+  both. "Supported versions" now names the latest release and `main`.
+
 ## [0.2.3] — 2026-09-16
 
 ### Added
