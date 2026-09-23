@@ -34,6 +34,8 @@ with it, so nobody discovers it from a bill or from a diff.
   per-page-kind confirmation floors. `SECURITY.md` named Akamai rather than
   DataDome, and a comment in `output_writer.py` used MediaMarkt's
   `/de/category/tv-audio-202.html` as its example of a page with no listings.
+  A smoke-test comment described "MediaMarkt's pages" without saying it was
+  a sibling site; it now does.
 
 ## [0.2.3] — 2026-09-16
 
