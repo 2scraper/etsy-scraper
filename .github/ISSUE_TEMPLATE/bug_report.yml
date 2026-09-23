@@ -78,7 +78,7 @@ body:
       placeholder: |
         python3 playwright_scraper.py \
           --url "https://www.etsy.com/search?q=handmade+mug" \
-          --pages 3 --out grills
+          --pages 3 --out mugs
     validations:
       required: true
 
@@ -98,7 +98,7 @@ body:
     attributes:
       label: What you expected instead
       placeholder: >-
-        96 products, as the README says a category page yields.
+        184 rows from three search pages, as the README's healthy run shows.
     validations:
       required: true
 
