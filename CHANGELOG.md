@@ -13,8 +13,24 @@ with it, so nobody discovers it from a bill or from a diff.
 
 ## [Unreleased]
 
+### Changed
+
+- **CSV output now neutralises spreadsheet formulas.** A text cell that
+  begins with `=`, `+`, `-`, `@`, tab, CR or LF is prefixed with `'`; numbers
+  are not touched, JSON is not touched, and `csv_cells_escaped` in the sidecar
+  counts the cells. A consumer parsing the CSV with code will see the
+  apostrophe.
+
 ### Fixed
 
+- **Output files were written in place, so a crash mid-write truncated the
+  previous good run.** `write_json`, `write_csv` and the `.meta.json` sidecar
+  now write to a temporary file in the same directory, `fsync`, and
+  `os.replace` it. A new output is mode 0644 and a rewritten one keeps its
+  existing mode.
+- **HTML dumps (`--dump-html`, the `_debug.html` files) are now mode 0600.**
+  They are what the site served this session and are what people paste into
+  issues.
 - **The Scraper API path (`scraper_api_client.py`) failed whenever a wait flag
   was given, and never saw the target's status.** Measured 2026-09-23 against
   the live `/tasks/sync` endpoint: `waitFor` sent as a JSON-encoded string

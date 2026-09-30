@@ -93,7 +93,8 @@ from product_parser import (parse_products, parse_product_page,
                             listing_kind, site_host, is_supported_host,
                             total_results, LOCALE_CURRENCY, locale_of,
                             unsupported_reason)
-from output_writer import dedupe_by_key, finish_run, EXIT_API_ERROR
+from output_writer import (dedupe_by_key, finish_run, EXIT_API_ERROR,
+                           write_private_text)
 import page_flow
 from page_flow import MIN_CARD_MATCHES
 from proxy_pool import (from_args as proxy_pool_from_args, to_playwright, mask,
@@ -923,8 +924,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # Naming that, and saying what DOES clear it, is more use than a
         # captcha hint that would cost money.
         debug_html = f"{args.out}_page{page_num}_debug.html"
-        with open(debug_html, "w", encoding="utf-8") as f:
-            f.write(html)
+        write_private_text(debug_html, html)
         verdict = datadome_verdict(html)
         logger.error(
             "Etsy refused this request: DataDome answered HTTP 403 with "
@@ -992,8 +992,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     if args.dump_html:
         dump_path = (args.dump_html if args.pages == 1
                      else f"{args.dump_html}.page{page_num}")
-        with open(dump_path, "w", encoding="utf-8") as f:
-            f.write(html)
+        write_private_text(dump_path, html)
         logger.info("Saved the snapshot the parser sees to %s (%d bytes).",
                     dump_path, len(html))
 
@@ -1011,8 +1010,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
               if state != "content" else None)
     if vendor:
         debug_html = f"{args.out}_page{page_num}_debug.html"
-        with open(debug_html, "w", encoding="utf-8") as f:
-            f.write(html)
+        write_private_text(debug_html, html)
         try:
             session.page.screenshot(path=f"{args.out}_page{page_num}_debug.png",
                                     full_page=True)
@@ -1099,8 +1097,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     if not products:
         debug_html = f"{args.out}_page{page_num}_debug.html"
         debug_png = f"{args.out}_page{page_num}_debug.png"
-        with open(debug_html, "w", encoding="utf-8") as f:
-            f.write(html)
+        write_private_text(debug_html, html)
         try:
             session.page.screenshot(path=debug_png, full_page=True)
         except Exception as e:

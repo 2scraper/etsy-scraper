@@ -263,6 +263,14 @@ across this scraper family — the first sixteen columns are identical in every
 repo in it — with Etsy's own columns appended. See
 [`sample_output.json`](sample_output.json), which is cut from a real run.
 
+Files are written to a temporary file beside the target and renamed over it, so
+a crash or a full disk leaves the previous run's output whole instead of a
+truncated file. In the CSV only, a text cell that starts with `=`, `+`, `-`, `@`,
+tab or a line break gets a leading `'` so a spreadsheet reads it as text (titles
+and shop names are written by sellers); the JSON keeps the site's bytes, and
+`csv_cells_escaped` in `<out>.meta.json` counts the cells changed. Numbers are
+never touched. Not measured on Etsy yet: how often this fires on real data.
+
 | column | notes |
 |---|---|
 | `source` `scraped_at` `url` `sku` `title` | `sku` is Etsy's listing id |

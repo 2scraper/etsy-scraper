@@ -4246,6 +4246,103 @@ def test_shared_calls_bind_against_the_real_signature():
     return ok
 
 
+def test_outputs_are_written_atomically_and_csv_is_formula_safe():
+    group("output_writer: atomic writes, CSV formula neutralisation, private dumps")
+    import json as _json
+    import stat
+    from unittest import mock
+    import output_writer as ow
+    ok = True
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    with tempfile.TemporaryDirectory() as d:
+        rows = [Product(sku="1", url="u", title="new")]
+        jp, cp = os.path.join(d, "o.json"), os.path.join(d, "o.csv")
+        mp = os.path.join(d, "o.meta.json")
+        for path, good in ((jp, "[1]"), (cp, "sku\n1\n"), (mp, "{}")):
+            with open(path, "w") as f:
+                f.write(good)
+        # A crash half way through a write must leave the previous file whole
+        # and leave no temp file beside it.
+        with mock.patch.object(ow.json, "dump", boom):
+            for label, call in (("write_json", lambda: ow.write_json(rows, jp)),
+                                ("write_run_meta",
+                                 lambda: ow.write_run_meta(os.path.join(d, "o"), {}))):
+                try:
+                    call()
+                    raised = False
+                except OSError:
+                    raised = True
+                ok &= check("%s: a failed write raises" % label, raised)
+        with mock.patch.object(ow.csv, "DictWriter", boom):
+            try:
+                ow.write_csv(rows, cp)
+            except OSError:
+                pass
+        ok &= check("a failed write leaves the previous json/csv/sidecar whole",
+                    open(jp).read() == "[1]" and open(cp).read() == "sku\n1\n"
+                    and open(mp).read() == "{}")
+        ok &= check("a failed write leaves no temp file behind",
+                    sorted(os.listdir(d)) == ["o.csv", "o.json", "o.meta.json"])
+
+        # A new file gets an ordinary mode (NamedTemporaryFile is 0600), an
+        # existing one keeps its own.
+        os.chmod(jp, 0o640)
+        ow.write_json(rows, jp)
+        fresh = os.path.join(d, "fresh.json")
+        ow.write_json(rows, fresh)
+        ok &= check("an existing output keeps its mode across a rewrite",
+                    stat.S_IMODE(os.stat(jp).st_mode) == 0o640)
+        ok &= check("a new output is 0644, not the temp file's 0600",
+                    stat.S_IMODE(os.stat(fresh).st_mode) == 0o644)
+
+        # CSV formulas: strings only, after the list join, JSON untouched.
+        evil = Product(sku="2", url="u", title="=HYPERLINK(\"x\")", price=-5.0,
+                       images=["+cmd", "b"], brand="ok")
+        out = os.path.join(d, "run")
+        code = finish_run([evil], out, "both", False, blocked=False,
+                          stop_reason="completed", pages_requested=1,
+                          pages_completed=1, pages_failed=[], mode="listing",
+                          source="etsy.com", start_url="u", final_url="u",
+                          extra={"csv_cells_escaped": "caller"})
+        import csv as _csv
+        with open(out + ".csv", newline="", encoding="utf-8") as f:
+            cell = next(_csv.DictReader(f))
+        ok &= check("CSV: a formula-shaped title is prefixed",
+                    cell["title"] == "'=HYPERLINK(\"x\")")
+        ok &= check("CSV: a list joined into one cell is escaped after the join",
+                    cell["images"].startswith("'+cmd"))
+        ok &= check("CSV: a negative NUMBER is left a number",
+                    cell["price"] == "-5.0")
+        ok &= check("JSON keeps the site's bytes",
+                    _json.load(open(out + ".json"))[0]["title"] == "=HYPERLINK(\"x\")")
+        ok &= check("the caller's extra wins a collision with housekeeping",
+                    _json.load(open(out + ".meta.json"))["csv_cells_escaped"] == "caller")
+        st = {}
+        ow.save([evil], os.path.join(d, "s"), "csv", stats=st)
+        ok &= check("save reports the escaped count (2 cells)",
+                    st.get("csv_cells_escaped") == 2)
+
+        # Diagnostic dumps: owner only, even over an existing 0644 file.
+        dump = os.path.join(d, "x_debug.html")
+        with open(dump, "w") as f:
+            f.write("old")
+        os.chmod(dump, 0o644)
+        ow.write_private_text(dump, "<html>")
+        ok &= check("a dump is 0600 even when the file already existed",
+                    stat.S_IMODE(os.stat(dump).st_mode) == 0o600
+                    and open(dump).read() == "<html>")
+
+    for eng in ("playwright_scraper", "puppeteer_scraper", "selenium_scraper"):
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                eng + ".py"), encoding="utf-8").read()
+        ok &= check("%s writes HTML dumps through write_private_text" % eng,
+                    "f.write(html)" not in src and "write_private_text(" in src)
+    return ok
+
+
 def test_sample_output():
     group("sample_output is cut from a real run")
     ok = True
@@ -4415,6 +4512,7 @@ def main() -> int:
     ok &= test_no_undefined_names()
     ok &= test_dockerfile_copies_what_it_runs()
     ok &= test_shared_calls_bind_against_the_real_signature()
+    ok &= test_outputs_are_written_atomically_and_csv_is_formula_safe()
     ok &= test_sample_output()
     ok &= test_x_debug_header_is_redacted()
     ok &= test_scraper_api_sends_waitfor_as_an_object_and_reads_http_code()
