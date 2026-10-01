@@ -100,7 +100,8 @@ Three places leak credentials that people do not expect, because unlike our own
 log lines they are **not** masked:
 
 - **raw HTML dumps** (`--dump-html`, and the automatic dump on a zero-product
-  run) — these can contain session cookies
+  run) — a snapshot of what the site served this session, which can carry
+  per-session tokens. They are written owner-only (0600) but are not scrubbed
 - **the Scraper API's `x-debug` response header**
 - **your shell history**, if you passed a key on the command line
 

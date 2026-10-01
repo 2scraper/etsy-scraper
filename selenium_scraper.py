@@ -73,7 +73,8 @@ from product_parser import (parse_products, parse_product_page,
                             page_url, listing_kind,
                             site_host, is_supported_host, total_results,
                             unsupported_reason)
-from output_writer import dedupe_by_key, finish_run, EXIT_API_ERROR
+from output_writer import (dedupe_by_key, finish_run, EXIT_API_ERROR,
+                           write_private_text)
 import page_flow
 from page_flow import MIN_CARD_MATCHES
 from proxy_pool import (from_args as proxy_pool_from_args, mask, ROTATE_MODES,
@@ -693,8 +694,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # under a 403. Saying so plainly, and saying what actually clears it,
         # is more use than a captcha hint that does not apply.
         debug_html = f"{args.out}_page{page_num}_debug.html"
-        with open(debug_html, "w", encoding="utf-8") as f:
-            f.write(html)
+        write_private_text(debug_html, html)
         logger.error("Etsy refused this request (DataDome under HTTP 403 "
                      "under HTTP 403) — saved to %s. There is no challenge on "
                      "that page to solve, so a 2Captcha key does not help; a "
@@ -742,8 +742,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     if args.dump_html:
         dump_path = (args.dump_html if args.pages == 1
                      else f"{args.dump_html}.page{page_num}")
-        with open(dump_path, "w", encoding="utf-8") as f:
-            f.write(html)
+        write_private_text(dump_path, html)
         logger.info("Saved the snapshot the parser sees to %s (%d bytes).",
                     dump_path, len(html))
 
@@ -755,8 +754,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
               if state != "content" else None)
     if vendor:
         debug_html = f"{args.out}_page{page_num}_debug.html"
-        with open(debug_html, "w", encoding="utf-8") as f:
-            f.write(html)
+        write_private_text(debug_html, html)
         try:
             session.driver.save_screenshot(f"{args.out}_page{page_num}_debug.png")
         except WebDriverException as e:
@@ -822,8 +820,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
 
     if not products:
         debug_html = f"{args.out}_page{page_num}_debug.html"
-        with open(debug_html, "w", encoding="utf-8") as f:
-            f.write(html)
+        write_private_text(debug_html, html)
         try:
             session.driver.save_screenshot(f"{args.out}_page{page_num}_debug.png")
         except WebDriverException as e:
