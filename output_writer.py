@@ -39,6 +39,7 @@ import csv
 import json
 import os
 import tempfile
+import threading
 from dataclasses import dataclass, asdict, field, fields
 from datetime import datetime, timezone
 from typing import Optional, List, Set, Sequence, Any, Type, Tuple
@@ -281,6 +282,18 @@ def _csv_escape(v: Any) -> Tuple[Any, bool]:
     return v, False
 
 
+_UMASK_LOCK = threading.Lock()
+
+
+def _current_umask() -> int:
+    """The process umask. Python can only read it by setting it, so it is 0
+    for an instant; the lock keeps two writers from interleaving that."""
+    with _UMASK_LOCK:
+        umask = os.umask(0)
+        os.umask(umask)
+    return umask
+
+
 @contextlib.contextmanager
 def _atomic(path: str, newline: Optional[str] = None):
     """Write to a temporary file beside `path`, then rename over it.
@@ -300,7 +313,11 @@ def _atomic(path: str, newline: Optional[str] = None):
 
     NamedTemporaryFile creates the file 0600 and a rename keeps that, so the
     output would come out unreadable to the group and to other users where
-    `open()` gave 0644. Restore the destination's own mode, or 0644.
+    `open()` honoured the umask. An existing destination keeps its own mode
+    (someone may have tightened it on purpose); a new one gets exactly what
+    `open(path, "w")` would have given it, `0o666 & ~umask`. A fixed 0644
+    would be wrong both ways: wider than a 077 umask asks for, narrower
+    than a 002 one.
     """
     directory = os.path.dirname(os.path.abspath(path)) or "."
     handle = tempfile.NamedTemporaryFile(
@@ -314,7 +331,7 @@ def _atomic(path: str, newline: Optional[str] = None):
         try:
             mode = os.stat(path).st_mode & 0o777
         except OSError:
-            mode = 0o644
+            mode = 0o666 & ~_current_umask()
         os.chmod(handle.name, mode)
         os.replace(handle.name, path)
     except BaseException:

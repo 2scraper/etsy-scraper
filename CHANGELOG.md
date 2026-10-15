@@ -13,6 +13,25 @@ with it, so nobody discovers it from a bill or from a diff.
 
 ## [Unreleased]
 
+> **Behaviour changes in this section, read these first:**
+>
+> * **A served listing page that states it holds listings and parses to
+>   none now ends the run `parser_found_nothing`** — exit 5 when nothing was
+>   gathered, exit 6 after earlier pages — instead of exit 4 ("empty
+>   catalogue"), or, on page 2 and later, a `complete` run with exit 0 that
+>   held page 1 only.
+> * **An HTTP 404/410 for the URL you gave is now `not_found`, exit 5**
+>   (Playwright and pyppeteer; Selenium exposes no status). It used to be
+>   classified by its markup, and an error page linking to recommended
+>   listings could be parsed as results. A 404 past page 1 still ends the
+>   listing normally.
+> * **New output files follow your umask** (`0o666 & ~umask`, what
+>   `open()` gives) instead of a fixed 0644; an existing file keeps its mode.
+>   Under umask 077 outputs are now 0600, under 002 they are 0664.
+> * **The canary is red whenever it did not test the site** — blocked,
+>   nothing obtained, partial, or no `ETSY_CDP_ENDPOINT` secret — and it now
+>   runs weekly as well as on demand.
+>
 > **Behaviour change:** `--retries 0` is now a usage error (exit 2). It used
 > to be accepted and made the page-load loop unreachable, so nothing was
 > fetched and the engine reported the browser's own blank page as a result:
@@ -30,6 +49,41 @@ with it, so nobody discovers it from a bill or from a diff.
 
 ### Fixed
 
+- **The pyppeteer and Selenium engines crashed on a block when no proxy
+  pool was configured** — the ordinary case over `--cdp-endpoint`. Etsy's
+  usual `t=bv` refusal reached `pool.current` / `pool.advance` on `None` and
+  the run ended with a traceback (exit 1) instead of a block (exit 3); the
+  pyppeteer engine did the same on a repeated load failure. Both now re-fetch
+  through the same access path without a relaunch, as the Playwright engine
+  already did, and rotate only when a pool exists. A pyppeteer timeout no
+  longer rotates exits either: like its twins it rotates only for an
+  unusable exit, a timeout having had its `--retries`.
+- **Paid solves could exceed the per-page limit.** The reCAPTCHA check runs
+  on every fetch attempt and was not counted, so one page with no pool could
+  buy four solves against a limit of one. Every purchase, reCAPTCHA and
+  DataDome, in all three engines, now goes through one per-page allowance
+  checked before buying and never reset by a retry or a rotation.
+- **New output files ignored the umask** (always 0644). See above.
+- **The credential scan could pass over nothing.** Its directory exclusions
+  were tested against the ABSOLUTE path, so a clone under any directory
+  named `venv` or `.git` scanned 0 files and reported clean; it now judges
+  paths relative to the repository and fails a scan that read nothing. It
+  also reads `.json`, `.html`, `.csv`, `.toml`, `Dockerfile` and `.env.*`
+  backups now; a hit in a file git ignores is reported as a warning, a hit
+  anywhere else fails.
+- **Raw dumps were not all git-ignored**: a top-level `page.html` (the shape
+  TROUBLESHOOTING suggests), `out.page3`-style multi-page dumps and a
+  `live/` directory are now ignored, with a check that shipped files are not.
+- **The CI workflow carried inline copies of the `--help` and sample checks**
+  that had drifted from `.github/ci_checks.py`; it now runs the script, which
+  also checks `diff_runs.py --help`.
+- **Garbled log text in the pyppeteer and Selenium block message** ("DataDome
+  under HTTP 403 under HTTP 403"), and a comment in `captcha_solver.py` that
+  described another site's hosts as Etsy's.
+- **Public files cited private maintainer notes** by name and section
+  number; the rules are now stated in place, and a check fails if such a
+  citation comes back.
+
 - **`--retries 0` fetched nothing and called it a result.** The load loop is
   `range(1, retries + 1)`, so 0 never runs it and the engine judged
   `about:blank`. Three third-party audits of this family ran exactly that and
@@ -41,8 +95,8 @@ with it, so nobody discovers it from a bill or from a diff.
 - **Output files were written in place, so a crash mid-write truncated the
   previous good run.** `write_json`, `write_csv` and the `.meta.json` sidecar
   now write to a temporary file in the same directory, `fsync`, and
-  `os.replace` it. A new output is mode 0644 and a rewritten one keeps its
-  existing mode.
+  `os.replace` it. A new output follows the umask exactly as `open()`
+  would, and a rewritten one keeps its existing mode.
 - **HTML dumps (`--dump-html`, the `_debug.html` files) are now mode 0600.**
   They are what the site served this session and are what people paste into
   issues.
@@ -86,7 +140,7 @@ with it, so nobody discovers it from a bill or from a diff.
 ### Added
 
 - **A check that binds every call into a shared module against the callee's
-  real signature** (§17's check #1), which this repo did not have. It catches
+  real signature**, which this repo did not have. It catches
   two things nothing else here can: a call whose arguments do not fit the
   signature, and a call to a name the shared module does not define at all —
   both of which reach a live run as a crash on the first fetch while import,
@@ -101,9 +155,9 @@ with it, so nobody discovers it from a bill or from a diff.
 
 - **`fingerprint_client.py` could not read the key from `.env`.** `--key`
   defaulted to `os.environ.get("TWOCAPTCHA_KEY")` and only that, so a key put
-  in `.env` — exactly as §3, the README and `.env.example` instruct — worked
+  in `.env` — exactly as the README and `.env.example` instruct — worked
   for every engine and failed HERE with "No API key". A documented mechanism
-  not applied on one path, which is the shape of half the defects §16 lists.
+  not applied on one path.
 
   It now reads through `env_config.env_value`, calling `load_env()` itself
   because this is a standalone entry point that no engine has necessarily run
@@ -115,7 +169,7 @@ with it, so nobody discovers it from a bill or from a diff.
   "still set to the placeholder from .env.example" instead.
 
   Found on a sibling repo's first live `--fingerprint` run, then checked
-  across the family before patching, per §16: five repos had it and one had
+  across the family before patching: five repos had it and one had
   already fixed it. Pinned by a check verified to fail on the old code —
   including that the help string does not interpolate its default, which is
   one substring away from printing a live credential to anyone who types
@@ -195,7 +249,7 @@ all: it got in, and parsed zero rows.
 
 ### The second storefront, verified — and a guard the family's own one cannot provide
 
-§15 of the family notes asks for a SECOND country site, and the first
+The family's practice is to verify a SECOND country site, and the first
 Scraping Browser zone could not give one: three fresh `pid`s with
 `country-us` all returned German exits. A second zone honoured it, so the US
 storefront is now captured and pinned.

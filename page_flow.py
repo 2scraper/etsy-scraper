@@ -59,7 +59,8 @@ from urllib.parse import (urlparse, urlunparse, parse_qsl, urlencode, unquote,
 
 from product_parser import (TRACKING_PARAMS, datadome_verdict,
                             detect_page_state, is_datadome_interstitial,
-                            page_number_from_url, page_url, total_pages)
+                            page_number_from_url, page_url, total_pages,
+                            total_results)
 
 logger = logging.getLogger("page_flow")
 
@@ -304,6 +305,12 @@ STATE_POLICY = {
     # listing has none either. Retrying it would spend the user's budget on
     # getting the same right answer again.
     "empty": {"retry": False, "solve": False, "blocked": False},
+    # The site answered 404/410 for this address. Final, and NOT blocked:
+    # exit 3 would send the reader looking for a proxy problem when the URL
+    # is simply wrong (a removed listing, a mistyped shop). Not parsed
+    # either: an error page can still link to recommended listings, and
+    # those are not the rows that were asked for.
+    "not_found": {"retry": False, "solve": False, "blocked": False},
 }
 
 
@@ -333,6 +340,61 @@ def counts_as_blocked(state: str) -> bool:
 # `CaptchaUnsolvable` on the first "not from here", so this number counts
 # purchases and not attempts.
 SOLVES_PER_PAGE = 1
+
+
+class SolveBudget:
+    """The paid-solve allowance for ONE page, shared by every call site.
+
+    An engine reaches the solver from two places per fetch attempt — the
+    reCAPTCHA check right after navigation, and the DataDome solve after the
+    page is classified — and both repeat on every block retry. A counter
+    kept beside only one of them made `SOLVES_PER_PAGE` advisory: with the
+    solver stubbed, one page with no proxy pool bought four reCAPTCHA solves
+    against a limit of one. So there is one object per page, created before
+    the retry loop, consulted immediately BEFORE each purchase and never
+    reset by a retry or a rotation: a fresh exit is a reason to re-fetch,
+    not a fresh allowance.
+    """
+
+    def __init__(self, limit: Optional[int] = None):
+        self.limit = SOLVES_PER_PAGE if limit is None else limit
+        self.spent = 0
+
+    def available(self) -> bool:
+        return self.spent < self.limit
+
+    def spend(self) -> bool:
+        """Claim one purchase. False, and nothing claimed, when exhausted."""
+        if not self.available():
+            logger.info("Not buying another solve for this page: its "
+                        "allowance of %d is spent.", self.limit)
+            return False
+        self.spent += 1
+        return True
+
+
+def parser_found_nothing(html: Optional[str], rows: int, page_num: int) -> bool:
+    """True when a SERVED listing page says it holds listings and none parsed.
+
+    Zero rows from a page Etsy served means one of two opposite things: the
+    listing is genuinely empty (a taxonomy hub, a search with no results,
+    one page past the end), or the tile markup moved and the parser can no
+    longer read it. Reported as "0 products" the second sends the reader to
+    check the URL instead of the parser, and on page 2 or later it ended the
+    run as a COMPLETE one holding page 1 only.
+
+    Etsy states its own arithmetic, which is what tells the two apart: the
+    listing's JSON-LD `numberOfItems` (any page that carries it) and a search
+    page's `initial_total_pages`. A page inside the site's own stated range
+    that yields nothing is the parser's failure, not the catalogue's.
+    """
+    if rows or not html:
+        return False
+    stated_pages = total_pages(html)
+    if stated_pages and page_num <= stated_pages:
+        return True
+    stated_items = total_results(html)
+    return bool(page_num == 1 and stated_items and stated_items > 0)
 
 
 # The DataDome solve is OPT-IN on this site, and that is a measurement rather
