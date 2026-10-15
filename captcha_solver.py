@@ -963,13 +963,13 @@ solve_recaptcha_v3 = solve_recaptcha
 # a JPEG of distorted text and a GET form). Roughly 190 lines of it, and none
 # of it is ported here, because Etsy has no such page.
 #
-# What Etsy does instead is answer HTTP 403 with a DataDome shell, whose
-# error page — no challenge, no form, nothing a solver can answer. Captured
-# 2026-09-09 from a datacentre exit on five hosts (.de, .es, .nl, .pl and
-# mediaworld.it): zero captcha markers of any kind, zero forms, zero images
-# to read. The response to that page is a different exit address, not a
-# solve, and product_parser.detect_page_state reports it as "blocked" rather
-# than "captcha" precisely so no solve is attempted.
+# What Etsy does instead is answer a refused request with HTTP 403 and a
+# DataDome shell. When that shell says `t=bv` it carries no form and nothing
+# a solver can answer — DataDome's own verdict is that the address or the
+# browser is banned. The response to that page is a different exit address,
+# not a solve, and product_parser.detect_page_state reports it as "blocked"
+# rather than "captcha" precisely so no solve is attempted. The one solvable
+# shape, `t=fe`, goes to solve_datadome above.
 #
 # The reCAPTCHA / hCaptcha / Turnstile machinery above IS kept, and that is a
 # deliberate asymmetry rather than an inconsistency. Detection stays broad
@@ -977,4 +977,4 @@ solve_recaptcha_v3 = solve_recaptcha
 # what the address has been doing — a narrow list is how a challenge gets
 # reported as an empty page months later. A solver for a challenge this site
 # has never been observed to serve is dead code; a DETECTOR for one is cheap
-# insurance. See the family note in CLAUDE.md.
+# insurance.

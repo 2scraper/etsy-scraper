@@ -130,9 +130,23 @@ class PageOutcome:
     # memory than the whole result set.
     shop_facts: Optional[dict] = None
 
+    # "not_found" or "parser_found_nothing": served, but no usable answer.
+    # See playwright_scraper.PageOutcome.
+    failure: Optional[str] = None
+
     @property
     def ok(self) -> bool:
-        return not self.load_failed and self.blocked_by is None
+        return (not self.load_failed and self.blocked_by is None
+                and self.failure is None)
+
+    @property
+    def stop_reason(self) -> Optional[str]:
+        """Why this page ended the run, or None if it did not."""
+        if self.load_failed:
+            return "page_load_timeout"
+        if self.blocked_by is not None:
+            return f"blocked_{self.blocked_by}"
+        return self.failure
 
 
 # Every `scheme://user:pass@` in a string, however many times it occurs.
@@ -435,7 +449,7 @@ def _next_page_candidates(session, page_num: int) -> List[str]:
                                           hrefs or [])
 
 
-def handle_datadome_if_present(session, args, html: str) -> bool:
+def handle_datadome_if_present(session, args, html: str, budget) -> bool:
     """Buy a DataDome solve when — and only when — one can work. True if solved.
 
     Mirrors playwright_scraper.handle_datadome_if_present exactly: the
@@ -476,6 +490,8 @@ def handle_datadome_if_present(session, args, html: str) -> bool:
         # A function BODY with an explicit return, not an arrow expression —
         # the dialect difference that keeps JavaScript out of page_flow.
         user_agent=driver.execute_script("return navigator.userAgent;"))
+    if not budget.spend():
+        return False
     try:
         name, value = solve_datadome(challenge, args.twocaptcha_key,
                                      args.proxy, attempts=2)
@@ -505,7 +521,7 @@ def handle_datadome_if_present(session, args, html: str) -> bool:
     return True
 
 
-def handle_captcha_if_present(session, args) -> bool:
+def handle_captcha_if_present(session, args, budget) -> bool:
     """Detect and solve a challenge. True if something was solved.
 
     Same detectors, same reconciliation and the same "detected is not
@@ -542,6 +558,8 @@ def handle_captcha_if_present(session, args) -> bool:
                    challenge.kind, challenge.source, challenge.sitekey)
     if not args.twocaptcha_key:
         logger.warning("No 2captcha API key, so this challenge cannot be solved.")
+        return False
+    if not budget.spend():
         return False
     try:
         token = solve_recaptcha(challenge, args.twocaptcha_key,
@@ -584,10 +602,9 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     block_retries = 0 if not page_flow.RETRY_ON_BLOCKED else (
         args.proxy_block_retries if has_pool
         else page_flow.BLOCK_RETRIES_WITHOUT_POOL)
-    # Counted across the whole block-retry loop, not per attempt: a page that
-    # keeps coming back as a challenge would otherwise buy one solve per
-    # rotation, which is how a run quietly turns into a bill.
-    solves_bought = 0
+    # One allowance for the whole block-retry loop and for BOTH solve call
+    # sites — see page_flow.SolveBudget.
+    budget = page_flow.SolveBudget()
 
     for block_attempt in range(block_retries + 1):
         logger.info("Fetching page %d/%d: %s", page_num, args.pages, url)
@@ -623,7 +640,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             break
 
 
-        if handle_captcha_if_present(session, args):
+        if handle_captcha_if_present(session, args, budget):
             time.sleep(1)
 
         html = d["content"]() or ""
@@ -638,10 +655,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # The paid path, and the only state that reaches it. `should_solve` is
         # True for "captcha" and False for "blocked", which is where the
         # t=fe / t=bv distinction turns into a decision about money.
-        if (page_flow.should_solve(state)
-                and solves_bought < page_flow.SOLVES_PER_PAGE):
-            solves_bought += 1
-            if handle_datadome_if_present(session, args, html):
+        if page_flow.should_solve(state) and budget.available():
+            if handle_datadome_if_present(session, args, html, budget):
                 html = d["content"]() or html
                 state = page_flow.classify(html, url=d["current_url"](),
                                            frame_urls=_frame_urls(session))
@@ -674,12 +689,25 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # so a different exit is the only thing that plausibly changes the
         # outcome.
         if block_attempt < block_retries:
-            logger.warning("Page %d came back as %s from %s — retrying from "
-                           "another exit (%d/%d).", page_num, state,
-                           mask(pool.current), block_attempt + 1, block_retries)
-            pool.advance(f"{state} on page {page_num}")
-            session.relaunch()
-            d = _driver(session)
+            if has_pool:
+                logger.warning("Page %d came back as %s from %s — retrying "
+                               "from another exit (%d/%d).", page_num, state,
+                               mask(pool.current), block_attempt + 1,
+                               block_retries)
+                pool.advance(f"{state} on page {page_num}")
+                session.relaunch()
+                d = _driver(session)
+            else:
+                # No pool, so nowhere else to go — a plain re-fetch through
+                # the same access path, as the Playwright engine does. Not a
+                # relaunch: over --cdp-endpoint a profile allows one live
+                # connection, and reconnecting risks profile_locked.
+                pause = args.retry_delay * (block_attempt + 1)
+                logger.warning("Page %d came back as %s — re-fetching through "
+                               "the same access path in %.1fs (%d/%d).",
+                               page_num, state, pause, block_attempt + 1,
+                               block_retries)
+                time.sleep(pause)
 
     if load_failed:
         logger.error("Gave up loading %s after %d attempt(s).", url, args.retries)
@@ -689,14 +717,15 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     outcome.state = state
 
     if state == "blocked":
-        # DataDome's `t=bv` says the challenge is unsolvable, so the generic
-        # challenge check below to find — it is the shop's own error page
-        # under a 403. Saying so plainly, and saying what actually clears it,
-        # is more use than a captcha hint that does not apply.
+        # DataDome's `t=bv` says the challenge is unsolvable, so this is
+        # reported here rather than left to the generic challenge check
+        # below: there is nothing on the page worth paying for. Saying so
+        # plainly, and saying what actually clears it, is more use than a
+        # captcha hint that does not apply.
         debug_html = f"{args.out}_page{page_num}_debug.html"
         write_private_text(debug_html, html)
-        logger.error("Etsy refused this request (DataDome under HTTP 403 "
-                     "under HTTP 403) — saved to %s. There is no challenge on "
+        logger.error("Etsy refused this request (DataDome, HTTP 403) — "
+                     "saved to %s. There is no challenge on "
                      "that page to solve, so a 2Captcha key does not help; a "
                      "residential exit does. This is exit 3, distinct from a "
                      "genuinely empty result (exit 4).", debug_html)
@@ -768,6 +797,16 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     final_url = d["current_url"]() or url
     products = _parse_for_mode(html, final_url, args)
     logger.info("Parsed %d row(s) from page %d.", len(products), page_num)
+    if (state == "content" and args.mode in ("listing", "shop")
+            and page_flow.parser_found_nothing(html, len(products), page_num)):
+        logger.error("Page %d was served and states it holds listings, but "
+                     "the parser read none from it. That is this scraper "
+                     "failing to read the page, not an empty catalogue — "
+                     "re-run with --dump-html and check the tile markup.",
+                     page_num)
+        outcome.failure = "parser_found_nothing"
+        outcome.final_url = d["current_url"]()
+        return outcome
 
     if args.mode == "shop" and page_num == 1:
         outcome.shop_facts = shop_metadata(html, d["current_url"]())
@@ -865,8 +904,7 @@ def scrape(args) -> int:
         outcomes.append(first)
 
         if not first.ok:
-            stop_reason = ("page_load_timeout" if first.load_failed
-                           else f"blocked_{first.blocked_by}")
+            stop_reason = first.stop_reason
             blocked = first.blocked_by is not None
         elif args.mode in ("listing", "shop"):
             seen_keys.update(p.sku for p in first.products if p.sku is not None)
@@ -905,8 +943,7 @@ def scrape(args) -> int:
                 outcome = _fetch_one_page(session, args, pool, page_num, url)
                 outcomes.append(outcome)
                 if not outcome.ok:
-                    stop_reason = ("page_load_timeout" if outcome.load_failed
-                                   else f"blocked_{outcome.blocked_by}")
+                    stop_reason = outcome.stop_reason
                     blocked = outcome.blocked_by is not None
                     break
 

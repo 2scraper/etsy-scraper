@@ -765,13 +765,15 @@ def datadome_captcha_url(html: str, frame_urls=None) -> Optional[str]:
 
 def detect_page_state(html: str, status: Optional[int] = None,
                       url: Optional[str] = None, frame_urls=None) -> str:
-    """One of "blocked", "captcha", "empty", "content".
+    """One of "blocked", "captcha", "empty", "content", "not_found".
 
     `status` is optional because not every engine path can see it — a page
     fetched over CDP reports one, a page read back out of a `--dump-html`
     file does not.
     """
     if not html:
+        if status in (404, 410):
+            return "not_found"
         return "blocked" if status and status >= 400 else "empty"
 
     verdict = datadome_verdict(html, frame_urls)
@@ -786,6 +788,12 @@ def detect_page_state(html: str, status: Optional[int] = None,
         # into; several of them turn into a served page, and others into a
         # `t=fe` challenge worth solving.
         return "captcha" if verdict == "fe" else "blocked"
+
+    if status in (404, 410):
+        # The site's own answer that this address does not exist. Checked
+        # before the content test, because an error page can still link to
+        # recommended listings and "/listing/" alone would call it content.
+        return "not_found"
 
     if status == 403:
         return "blocked"

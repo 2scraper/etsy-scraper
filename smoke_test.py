@@ -51,6 +51,7 @@ import sys
 import tempfile
 import textwrap
 import threading
+import time
 import builtins
 from contextlib import redirect_stdout
 from dataclasses import asdict as dataclasses_asdict, fields
@@ -3307,10 +3308,13 @@ def test_datadome_policy_is_shared():
                     "should_pay_for(verdict, solve_mode)" in src)
         ok &= check("%s says why when it declines a solvable challenge" % name,
                     "the solve is opt-in" in src)
-        ok &= check("%s caps purchases with SOLVES_PER_PAGE" % name,
-                    "page_flow.SOLVES_PER_PAGE" in src)
-        ok &= check("%s counts purchases outside the retry loop" % name,
-                    "solves_bought = 0" in src)
+        # The cap itself is asserted by BEHAVIOUR in
+        # test_engines_fetch_one_page_with_stubbed_drivers; this only pins
+        # that every engine holds one allowance object per page rather than
+        # a counter of its own beside one of the two call sites.
+        ok &= check("%s holds one SolveBudget per page" % name,
+                    src.count("budget = page_flow.SolveBudget()") == 1
+                    and "solves_bought" not in src)
         ok &= check("%s takes the cookie domain from page_flow" % name,
                     "page_flow.datadome_cookie_domain" in src)
         ok &= check("%s reads the browser's OWN user agent" % name,
@@ -3397,7 +3401,7 @@ def test_pyppeteer_teardown_noise():
 
 
 def test_canary_separates_access_from_defect():
-    group("the canary fails on defects and only WARNS on access conditions")
+    group("the canary is red unless it actually tested the site")
     ok = True
     wf_path = os.path.join(REPO_ROOT, ".github", "workflows", "canary.yml")
     wf = open(wf_path, encoding="utf-8").read()
@@ -3419,20 +3423,13 @@ def test_canary_separates_access_from_defect():
     script = "\n".join(line[10:] if line.startswith(" " * 10) else line
                         for line in wf[start:end].splitlines())
 
-    # WHY EACH CODE LANDS WHERE IT DOES:
-    #   0  got in and parsed         -> pass, and the assertions then run
-    #   3  blocked before parsing    -> ACCESS. Measured intermittent per
-    #      profile on this site, so a daily red badge would be noise.
-    #   5  endpoint refused          -> ACCESS, and the commonest cause is an
-    #      EXPIRED SECRET. A credential is not forever; failing on it paints
-    #      the badge red every day until someone notices.
-    #   6  partial                   -> ACCESS, usually a mid-run block.
-    #   1  crashed                   -> DEFECT.
-    #   2  bad arguments             -> DEFECT (in the workflow itself).
-    #   4  served a page, ZERO rows  -> DEFECT, and precisely the regression
-    #      this canary exists to catch: the tile anchor moved.
-    expected = {0: "pass", 3: "warn", 5: "warn", 6: "warn",
-                1: "fail", 2: "fail", 4: "fail", 99: "fail"}
+    # Only 0 — got in and parsed — passes. This used to let 3 (blocked),
+    # 5 (nothing obtained) and 6 (partial) through as WARNINGS on a green
+    # job, so the badge could stay green for weeks without the site being
+    # tested once. Each of those now fails, with a message naming why, so
+    # an access problem is still told apart from a parser regression.
+    expected = {0: "pass", 1: "fail", 2: "fail", 3: "fail", 4: "fail",
+                5: "fail", 6: "fail", 99: "fail"}
     for code, want in sorted(expected.items()):
         body = script.replace('code="${{ steps.run.outputs.exit_code }}"',
                               'code="%d"' % code)
@@ -3446,38 +3443,46 @@ def test_canary_separates_access_from_defect():
                 env=dict(os.environ, GITHUB_OUTPUT=out_file,
                          GITHUB_STEP_SUMMARY=summary))
             failed = done.returncode != 0
-            warned = "::warning::" in done.stdout
             errored = "::error::" in done.stdout
-            wrote_summary = bool(open(summary, encoding="utf-8").read().strip())
             tested = "tested=true" in open(out_file, encoding="utf-8").read()
-
         if want == "pass":
-            got = not failed and not warned and not errored and tested
-        elif want == "warn":
-            # A warning must NOT read as a pass: it also has to say in the
-            # step summary that nothing was actually tested, and it must not
-            # claim `tested`.
-            got = not failed and warned and wrote_summary and not tested
+            got = not failed and not errored and tested
         else:
-            got = failed and errored
+            got = failed and errored and not tested
         ok &= check("exit %-2d is treated as %s" % (code, want), got)
 
-    ok &= check("the reason access is not a defect is written down",
-                "ACCESS CONDITIONS ARE NOT DEFECTS" in wf)
+    # No secret, no test — and that must be RED, naming the secret. Run the
+    # real step, as above.
+    try:
+        start = wf.index("      - name: Fail when the live run cannot happen")
+        start = wf.index("        run: |\n", start) + len("        run: |\n")
+        end = wf.index("\n\n", start)
+    except ValueError:
+        return check("the missing-secret step could be located", False)
+    missing = "\n".join(line[10:] for line in wf[start:end].splitlines())
+    with tempfile.TemporaryDirectory() as td:
+        summary = os.path.join(td, "gh_summary")
+        done = subprocess.run(["bash", "-c", missing], capture_output=True,
+                              text=True, env=dict(os.environ,
+                                                  GITHUB_STEP_SUMMARY=summary))
+    ok &= check("a missing ETSY_CDP_ENDPOINT fails the job and names it",
+                done.returncode != 0 and "::error::" in done.stdout
+                and "ETSY_CDP_ENDPOINT" in done.stdout)
+    ok &= check("that step runs exactly when the secret is absent",
+                "if: env.HAVE_CDP != 'true'" in wf)
+    ok &= check("no step in the canary emits a ::warning:: or ::notice:: "
+                "in place of a failure",
+                "::warning::" not in wf and "::notice::" not in wf)
 
-    # NO SCHEDULE, and the reason has to travel with the decision. A daily
-    # cron against a credential that does not survive a day gives either a
-    # permanently red badge or a permanently green one that tested nothing —
-    # and the green is worse, because it reads as "the parser still works".
-    # Restoring the cron is a legitimate change the day a long-lived
-    # credential exists; this check makes it a decision rather than a habit.
-    ok &= check("the canary has no cron schedule",
-                not re.search(r"^\s*-\s*cron:", wf, re.M))
+    # Scheduled, so a site-side change is found without anyone remembering
+    # to look. No claim about how long an endpoint lives travels with it: a
+    # refused endpoint is red and says so.
+    ok &= check("the canary runs on a schedule",
+                bool(re.search(r"^\s*-\s*cron:", wf, re.M)))
     ok &= check("it is dispatchable by hand", "workflow_dispatch:" in wf)
-    ok &= check("and the reason the schedule is off is written down",
-                "does not survive a day" in wf)
-    ok &= check("the expired-secret case is named",
-                "expired" in wf.lower() and "refresh" in wf.lower())
+    ok &= check("no unmeasured endpoint-lifetime claim",
+                "does not survive a day" not in wf
+                and "most likely expired" not in wf)
     return ok
 
 
@@ -3501,6 +3506,15 @@ def test_ci_checks_is_actually_wired_up():
     ok &= check("a workflow runs ci_checks.py", "ci_checks.py" in workflows)
     ok &= check("the secret check specifically is run",
                 "--secret-check" in workflows or "--all" in workflows)
+    ok &= check("the help and sample checks are run from ci_checks.py",
+                "--help-check" in workflows and "--sample-check" in workflows)
+    # No workflow reimplements a check inline by importing this repo's own
+    # modules: nothing local runs a workflow, so such a copy drifts unseen.
+    inline = re.findall(r"^\s*(?:from|import)\s+(output_writer|product_parser|"
+                        r"page_flow|playwright_scraper|puppeteer_scraper|"
+                        r"selenium_scraper|diff_runs)\b", workflows, re.M)
+    ok &= check("no workflow imports a local module inline %s" % (inline or ""),
+                not inline)
 
     # AND IT PASSES ON THIS REPO. A check that is always red teaches everyone
     # to ignore checks; this one WAS red, on six documented placeholders.
@@ -3547,6 +3561,51 @@ def test_ci_checks_is_actually_wired_up():
         if os.path.exists(planted):
             os.remove(planted)
     ok &= check("the probe file is cleaned up", not os.path.exists(planted))
+
+    # Exclusions are relative to the REPOSITORY, and a scan of nothing is a
+    # failure. A copy of the tracked tree inside a directory called `venv`
+    # (and `.git`) used to scan 0 files and print "nothing credential-shaped".
+    import shutil
+    tracked = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT,
+                             capture_output=True, text=True).stdout.split()
+    if tracked:
+        with tempfile.TemporaryDirectory() as tmp:
+            clone = os.path.join(tmp, "venv", ".git", "etsy-scraper")
+            for f in tracked:
+                os.makedirs(os.path.dirname(os.path.join(clone, f)), exist_ok=True)
+                shutil.copy2(os.path.join(REPO_ROOT, f), os.path.join(clone, f))
+            git_ok = subprocess.run(["git", "init", "-q", clone],
+                                    capture_output=True).returncode == 0
+            ci = os.path.join(clone, ".github", "ci_checks.py")
+
+            def scan():
+                done = subprocess.run([sys.executable, ci, "--secret-check"],
+                                      cwd=clone, capture_output=True, text=True)
+                return done.returncode, done.stdout + done.stderr
+
+            rc, out = scan()
+            m = re.search(r"(\d+) files scanned", out)
+            ok &= check("a clone under venv/.git/ ancestors still scans its "
+                        "files (%s)" % (m.group(1) if m else out.strip()[-120:]),
+                        rc == 0 and m is not None and int(m.group(1)) > 10)
+            key = "3f8a1c9e4b7d2065" + "af13ce88b409d752"
+            # A data file git would NOT ignore fails the scan...
+            with open(os.path.join(clone, "fixture.toml"), "w") as f:
+                f.write('key = "%s"\n' % key)
+            rc, out = scan()
+            ok &= check("a key in an unignored data file (.toml) fails the scan",
+                        rc != 0 and "fixture.toml:1" in out)
+            os.remove(os.path.join(clone, "fixture.toml"))
+            # ...and a renamed .env / a dump that git ignores is still READ,
+            # and reported, without failing a run on a local key.
+            for name in (".env.bak", "scratch.json"):
+                with open(os.path.join(clone, name), "w") as f:
+                    f.write("TWOCAPTCHA_KEY=%s\n" % key)
+            rc, out = scan()
+            ok &= check("an ignored .env.bak and scratch.json are scanned and "
+                        "reported as warnings (git available: %s)" % git_ok,
+                        ".env.bak:1" in out and "scratch.json:1" in out
+                        and (rc == 0 if git_ok else rc != 0))
 
     # The pre-publication scan: the same rules over every blob that has EVER
     # existed. A later commit cannot remove what a published tag and a merged
@@ -3667,6 +3726,60 @@ ENGINE_FILES = ("playwright_scraper.py", "puppeteer_scraper.py",
                 "selenium_scraper.py")
 
 
+PRIVATE_CITATION_RE = re.compile(
+    "|".join([re.escape("CLAUDE" + ".md"), re.escape("claude_" + "2scraper"),
+              re.escape("2scraper_" + "repo_rules"), "play" + "book",
+              chr(0xA7) + r"\s*\d"]),
+    re.IGNORECASE)
+
+
+def check_no_private_citations(listed=None):
+    if listed is None:
+        listed = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT,
+                                capture_output=True, text=True)
+    if listed.returncode != 0 or not listed.stdout.strip():
+        return True  # not a git checkout: nothing to say about shipped files
+    files = [f for f in listed.stdout.split("\n") if f]
+    offenders, scanned = [], 0
+    for f in files:
+        try:
+            text = open(os.path.join(REPO_ROOT, f), encoding="utf-8").read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        scanned += 1
+        for n, line in enumerate(text.splitlines(), 1):
+            if PRIVATE_CITATION_RE.search(line):
+                offenders.append("%s:%d" % (f, n))
+    ok = check("the private-citation scan read the tracked files (%d)" % scanned,
+               scanned > 10)
+    ok &= check("no tracked file cites a private note or its sections %s"
+                % (offenders[:5] or ""), not offenders)
+    return ok
+
+
+def test_gitignore_covers_dumps_and_keeps_shipped_files():
+    group(".gitignore: dumps and captures ignored, shipped files kept")
+    ok = True
+    if subprocess.run(["git", "rev-parse"], cwd=REPO_ROOT,
+                      capture_output=True).returncode != 0:
+        print("  (not a git checkout — nothing to ask git about)")
+        return True
+
+    def ignored(path):
+        return subprocess.run(["git", "check-ignore", "-q", "--no-index", path],
+                              cwd=REPO_ROOT).returncode == 0
+
+    for path in ("page.html", "out.page3", "canary_dump.json.page3",
+                 "live/x.html", "x_debug.html", "etsy_products.json",
+                 ".env", ".env.bak", ".env.local"):
+        ok &= check("%s is ignored" % path, ignored(path))
+    for path in ("sample_output.json", "sample_output.csv", ".env.example",
+                 ".github/workflows/tests.yml", ".github/ci_checks.py",
+                 "tests/test_smoke.py", "smoke_test.py", "README.md"):
+        ok &= check("%s is NOT ignored" % path, not ignored(path))
+    return ok
+
+
 def test_wording():
     group("wording and removed flags")
     ok = True
@@ -3697,6 +3810,13 @@ def test_wording():
             if phrase.lower() in text.lower():
                 offenders.append(f)
         ok &= check("no shipped file says %r" % phrase, not offenders)
+
+    # Private notes are not public references. A shipped file that points
+    # the reader at a maintainer's private instruction file, or at a numbered
+    # section of one, sends them somewhere they cannot follow. Every tracked
+    # file is scanned, this one included, so the tokens are assembled from
+    # pieces and the guard does not match itself.
+    ok &= check_no_private_citations(listed)
 
     for flag in REMOVED_ENGINE_FLAGS:
         offenders = []
@@ -3819,10 +3939,9 @@ def test_fingerprint_client_reads_env():
     # THE DEFECT THIS PINS, found the first time --fingerprint was run live
     # here and confirmed present in five sibling repos: `--key` defaulted to
     # `os.environ.get("TWOCAPTCHA_KEY")` alone. So a key put in `.env` —
-    # which is exactly what §3, the README and .env.example instruct — worked
+    # which is exactly what the README and .env.example instruct — worked
     # for every engine and failed HERE with "No API key". A documented
-    # mechanism not applied on one path, which is the shape of half the
-    # defects §16 lists.
+    # mechanism not applied on one path.
     src = inspect.getsource(fpc.main)
     ok &= check("it loads .env itself, rather than hoping an engine did",
                 "env_config.load_env()" in src)
@@ -4137,7 +4256,7 @@ def test_dockerfile_copies_what_it_runs():
 
 
 def test_shared_calls_bind_against_the_real_signature():
-    """§17's check #1: bind every call into a shared module against the
+    """Bind every call into a shared module against the
     callee's real signature.
 
     This exists because of a defect that no other check in this suite can
@@ -4295,8 +4414,31 @@ def test_outputs_are_written_atomically_and_csv_is_formula_safe():
         ow.write_json(rows, fresh)
         ok &= check("an existing output keeps its mode across a rewrite",
                     stat.S_IMODE(os.stat(jp).st_mode) == 0o640)
-        ok &= check("a new output is 0644, not the temp file's 0600",
-                    stat.S_IMODE(os.stat(fresh).st_mode) == 0o644)
+        # A new file follows the umask exactly as open() would. 022 is the
+        # value every candidate rule agrees on, so 002 and 077 are the cases
+        # that tell a correct rule from a flat 0644.
+        for umask, want in ((0o022, 0o644), (0o002, 0o664), (0o077, 0o600)):
+            old_umask = os.umask(umask)
+            try:
+                got = {}
+                for label, path, call in (
+                        ("json", os.path.join(d, "m%o.json" % umask),
+                         lambda p: ow.write_json(rows, p)),
+                        ("csv", os.path.join(d, "m%o.csv" % umask),
+                         lambda p: ow.write_csv(rows, p)),
+                        ("sidecar", os.path.join(d, "m%o" % umask),
+                         lambda p: ow.write_run_meta(p, {}))):
+                    call(path)
+                    real = path + ".meta.json" if label == "sidecar" else path
+                    got[label] = stat.S_IMODE(os.stat(real).st_mode)
+            finally:
+                os.umask(old_umask)
+            ok &= check("umask %03o: new json/csv/sidecar are %03o (got %s)"
+                        % (umask, want, {k: "%03o" % v for k, v in got.items()}),
+                        set(got.values()) == {want})
+        ok &= check("a new output is not the temp file's 0600 under umask 022",
+                    stat.S_IMODE(os.stat(fresh).st_mode) == 0o644
+                    or os.umask(os.umask(0)) != 0o022)
 
         # CSV formulas: strings only, after the list join, JSON untouched.
         evil = Product(sku="2", url="u", title="=HYPERLINK(\"x\")", price=-5.0,
@@ -4526,6 +4668,298 @@ def test_retries_is_validated_in_every_entry_point():
     return check("--retries is validated in every entry point, so 0 is a usage error", not problems)
 
 
+
+# ---------------------------------------------------------------------------
+# The three engines' page loop, driven with the DRIVER stubbed out
+# ---------------------------------------------------------------------------
+def _load_engine_with_stub_driver(name):
+    """Import `<name>.py` under a private module name with fake driver modules.
+
+    Deliberately not `import playwright_scraper`: that skips wherever the
+    driver is absent, which is the core-only venv and CI's offline job — so a
+    check written that way would never run in the two places that matter
+    most. The engine is read off disk and its driver imports are satisfied
+    by stand-ins; nothing here can reach a browser or the network.
+    """
+    import importlib.util
+    import types
+    from unittest import mock
+
+    def mod(modname, **attrs):
+        m = types.ModuleType(modname)
+        m.__path__ = []
+        for k, v in attrs.items():
+            setattr(m, k, v)
+        return m
+
+    class _Err(Exception):
+        pass
+
+    fakes = {
+        "playwright": mod("playwright"),
+        "playwright.sync_api": mod("playwright.sync_api",
+                                   sync_playwright=mock.MagicMock(),
+                                   Error=type("Error", (_Err,), {}),
+                                   TimeoutError=type("TimeoutError", (_Err,), {})),
+        "pyppeteer": mod("pyppeteer", launch=mock.MagicMock(),
+                         connect=mock.MagicMock()),
+        "selenium": mod("selenium", webdriver=mock.MagicMock()),
+        "selenium.common": mod("selenium.common"),
+        "selenium.common.exceptions": mod(
+            "selenium.common.exceptions",
+            TimeoutException=type("TimeoutException", (_Err,), {}),
+            WebDriverException=type("WebDriverException", (_Err,), {}),
+            JavascriptException=type("JavascriptException", (_Err,), {})),
+        "selenium.webdriver": mod("selenium.webdriver"),
+        "selenium.webdriver.chrome": mod("selenium.webdriver.chrome"),
+        "selenium.webdriver.chrome.options": mod(
+            "selenium.webdriver.chrome.options", Options=mock.MagicMock()),
+        "selenium.webdriver.common": mod("selenium.webdriver.common"),
+        "selenium.webdriver.common.by": mod(
+            "selenium.webdriver.common.by", By=mock.MagicMock()),
+        "selenium.webdriver.support": mod("selenium.webdriver.support"),
+        "selenium.webdriver.support.ui": mod(
+            "selenium.webdriver.support.ui", WebDriverWait=mock.MagicMock()),
+    }
+    spec = importlib.util.spec_from_file_location(
+        "_stubbed_" + name, os.path.join(REPO_ROOT, name + ".py"))
+    engine = importlib.util.module_from_spec(spec)
+    with mock.patch.dict(sys.modules, fakes):
+        spec.loader.exec_module(engine)
+    return engine
+
+
+class _StubResponse:
+    def __init__(self, status):
+        self.status = status
+
+
+class _StubPage:
+    """Answers every driver call the three page loops make. `html` is what
+    each read returns, `status` what every navigation answers, `raises` an
+    exception every navigation throws instead."""
+
+    def __init__(self, html, status=200, raises=None):
+        self.html, self.status, self.raises = html, status, raises
+        self.url = "https://www.etsy.com/search?q=handmade+mug"
+        self.gotos = 0
+        self.context = self
+
+    # navigation, all three dialects
+    def goto(self, *a, **k):
+        self.gotos += 1
+        if self.raises is not None:
+            raise self.raises
+        return _StubResponse(self.status)
+
+    def get(self, url):  # selenium
+        self.goto()
+
+    def content(self):
+        return self.html
+
+    @property
+    def page_source(self):
+        return self.html
+
+    @property
+    def current_url(self):
+        return self.url
+
+    def __getattr__(self, attr):
+        # Everything else (waits, evaluate, reload, screenshot, cookies,
+        # frames, querySelectorAll...) is a no-op returning an empty list,
+        # which reads as "no frames" and "no tiles".
+        return lambda *a, **k: []
+
+
+class _StubSession:
+    def __init__(self, page):
+        self.page = self.driver = page
+        self.bridge = self  # pyppeteer: bridge.run(coro) -> value
+        self.relaunches = 0
+
+    def run(self, value):
+        return value
+
+    def relaunch(self):
+        self.relaunches += 1
+
+
+def _drive_fetch_one_page(engine, name, page, solve_mode="when-blocked",
+                          key=None, page_num=1, pool=None):
+    """Run `engine._fetch_one_page` once over `page` and report what it did."""
+    import types
+    from unittest import mock
+
+    session = _StubSession(page)
+    bought = {"recaptcha": 0, "datadome": 0}
+
+    def fake_driver(sess):
+        return {"count": lambda sel: 0, "sleep": lambda ms: None,
+                "content": lambda: sess.page.html,
+                "current_url": lambda: sess.page.url}
+
+    def solve_recaptcha(*a, **k):
+        bought["recaptcha"] += 1
+        return "stub-token"
+
+    def solve_datadome(*a, **k):
+        bought["datadome"] += 1
+        return ("datadome", "stub-cookie")
+
+    challenge = types.SimpleNamespace(kind="recaptcha-v2", source="stub",
+                                      sitekey="stub-sitekey", action=None)
+    patches = dict(
+        solve_recaptcha=solve_recaptcha, solve_datadome=solve_datadome,
+        detect_recaptcha_v3=lambda *a, **k: None,
+        detect_recaptcha_in_page=lambda *a, **k: None,
+        reconcile_detections=lambda *a, **k: challenge,
+        write_private_text=lambda *a, **k: None,
+        _frame_urls=lambda *a, **k: [],
+        time=types.SimpleNamespace(sleep=lambda s: None, time=time.time,
+                                   monotonic=time.monotonic))
+    if name == "playwright_scraper":
+        patches.update(_content_when_settled=lambda p, *a, **k: p.html,
+                       _content_or_none=lambda p: p.html)
+    elif name == "puppeteer_scraper":
+        patches.update(_driver=fake_driver, _content=lambda sess: sess.page.html)
+    else:
+        patches.update(_driver=fake_driver)
+
+    argv = ["x", "--url", page.url, "--retries", "1", "--retry-delay", "0",
+            "--solve-captcha", solve_mode, "--out", "/nonexistent/etsy_stub"]
+    # No credential from the caller's environment reaches these args; the
+    # solver functions are stubbed regardless, so nothing is ever sent.
+    env = {k: v for k, v in os.environ.items()
+           if k != "TWOCAPTCHA_KEY" and not k.startswith("ETSY_")}
+    with mock.patch.object(sys, "argv", argv), \
+            mock.patch.dict(os.environ, env, clear=True):
+        args = engine.parse_args()
+    args.twocaptcha_key = key
+    args.dump_html = None
+    error = None
+    outcome = None
+    import logging as _logging
+    _logging.disable(_logging.CRITICAL)  # the loop's own log is not the subject
+    with mock.patch.multiple(engine, **patches):
+        try:
+            outcome = engine._fetch_one_page(session, args, pool, page_num,
+                                             page.url)
+        except Exception as e:  # noqa: BLE001 — the crash IS the finding
+            error = "%s: %s" % (type(e).__name__, e)
+        finally:
+            _logging.disable(_logging.NOTSET)
+    return {"outcome": outcome, "error": error, "bought": bought,
+            "gotos": page.gotos, "relaunches": session.relaunches}
+
+
+def test_engines_fetch_one_page_with_stubbed_drivers():
+    group("engines: one page loop each, driver stubbed (no pool, budget, "
+          "404, parser failure)")
+    import page_flow as _pf
+    ok = True
+    attempts = _pf.BLOCK_RETRIES_WITHOUT_POOL + 1
+    served_but_unreadable = (
+        '<html><head><script type="application/ld+json">'
+        '{"@type": "ItemList", "numberOfItems": 201606}</script>'
+        '<link href="https://i.etsystatic.com/x.css"></head><body>'
+        '<div class="renamed-tile">see /listing/ pages</div></body></html>')
+    not_found_page = (
+        '<html><head><link href="https://i.etsystatic.com/x.css"></head>'
+        '<body><h1>Sorry, this page does not exist</h1>'
+        '<a href="https://www.etsy.com/listing/1234567890/mug">mug</a>'
+        '</body></html>')
+    for name in ENGINES:
+        engine = _load_engine_with_stub_driver(name)
+        proxy_error = getattr(engine, {
+            "playwright_scraper": "PWError",
+            "puppeteer_scraper": "Exception",
+            "selenium_scraper": "WebDriverException",
+        }[name], Exception)("net::ERR_PROXY_CONNECTION_FAILED")
+
+        # 1. The commonest Etsy outcome with no proxy pool — the ordinary
+        # case over --cdp-endpoint — must be a block (exit 3), not a crash.
+        r = _drive_fetch_one_page(engine, name, _StubPage(DD_BANNED_FIXTURE, 403))
+        ok &= check("%s: t=bv with no pool does not raise (%s)"
+                    % (name, r["error"]), r["error"] is None)
+        ok &= check("%s: t=bv with no pool is reported as datadome-bv" % name,
+                    r["outcome"] is not None
+                    and r["outcome"].blocked_by == "datadome-bv")
+        ok &= check("%s: t=bv with no pool re-fetches %d times and never "
+                    "relaunches (one connection per CDP profile)"
+                    % (name, attempts),
+                    r["gotos"] == attempts and r["relaunches"] == 0)
+
+        # 2. A dead exit with no pool: nothing to rotate to, so a load
+        # failure — not an AttributeError on pool.advance.
+        r = _drive_fetch_one_page(engine, name, _StubPage(
+            DD_BANNED_FIXTURE, raises=proxy_error))
+        ok &= check("%s: a dead exit with no pool does not raise (%s)"
+                    % (name, r["error"]), r["error"] is None)
+        ok &= check("%s: a dead exit with no pool is a load failure" % name,
+                    r["outcome"] is not None and r["outcome"].load_failed
+                    and r["outcome"].stop_reason == "page_load_timeout")
+
+        # 3. The paid budget covers BOTH call sites over every retry. A page
+        # that stays a solvable challenge, with a reCAPTCHA reported on it
+        # too and --solve-captcha always: at most SOLVES_PER_PAGE purchases.
+        r = _drive_fetch_one_page(engine, name,
+                                  _StubPage(DD_SOLVABLE_FIXTURE, 403),
+                                  solve_mode="always", key="stub-key")
+        total = r["bought"]["recaptcha"] + r["bought"]["datadome"]
+        ok &= check("%s: %d attempt(s) bought %d solve(s) %s, limit %d"
+                    % (name, r["gotos"], total, r["bought"],
+                       _pf.SOLVES_PER_PAGE),
+                    r["error"] is None and r["gotos"] == attempts
+                    and 1 <= total <= _pf.SOLVES_PER_PAGE)
+
+        # 4. A served page that states 201,606 listings and parses to none
+        # is the parser's failure, not an empty catalogue.
+        # Page 2 needs the site's own page count: `numberOfItems` alone does
+        # not say whether page 2 exists, and a page past the end is empty.
+        for page_num, html in ((1, served_but_unreadable),
+                               (2, served_but_unreadable.replace(
+                                   "</head>",
+                                   '<script>{"initial_total_pages":20}</script>'
+                                   "</head>"))):
+            r = _drive_fetch_one_page(engine, name, _StubPage(html, 200),
+                                      page_num=page_num)
+            ok &= check("%s: page %d stating listings, none parsed -> "
+                        "parser_found_nothing (%s)"
+                        % (name, page_num, r["error"]),
+                        r["outcome"] is not None
+                        and r["outcome"].stop_reason == "parser_found_nothing"
+                        and not r["outcome"].ok)
+
+        # 5. HTTP 404 reaches the classifier where the driver reports one.
+        # Selenium cannot see a status at all, so it is exempt.
+        if name != "selenium_scraper":
+            r = _drive_fetch_one_page(engine, name, _StubPage(not_found_page, 404))
+            ok &= check("%s: a 404 is not_found, one fetch, no rows (%s)"
+                        % (name, r["error"]),
+                        r["outcome"] is not None
+                        and r["outcome"].stop_reason == "not_found"
+                        and not r["outcome"].products and r["gotos"] == 1)
+            r = _drive_fetch_one_page(engine, name, _StubPage(not_found_page, 404),
+                                      page_num=3)
+            ok &= check("%s: a 404 past page 1 is the end of the listing" % name,
+                        r["outcome"] is not None and r["outcome"].ok
+                        and r["outcome"].state == "empty")
+    # And the run-level mapping: neither failure is "complete" or exit 4.
+    for reason, rows, want in (("parser_found_nothing", [], 5),
+                               ("not_found", [], 5)):
+        with tempfile.TemporaryDirectory() as d:
+            code = finish_run(rows, os.path.join(d, "o"), "json", False,
+                              blocked=False, stop_reason=reason,
+                              pages_requested=1, pages_completed=0,
+                              pages_failed=[1], mode="listing",
+                              source="etsy.com", start_url="u", final_url="u")
+        ok &= check("finish_run: %s with no rows is exit %d (got %s)"
+                    % (reason, want, code), code == want)
+    return ok
+
+
 def main() -> int:
     ok = True
     # Checks that could not run because an optional engine library is absent.
@@ -4572,6 +5006,8 @@ def main() -> int:
     ok &= test_dockerfile_copies_what_it_runs()
     ok &= test_shared_calls_bind_against_the_real_signature()
     ok &= test_outputs_are_written_atomically_and_csv_is_formula_safe()
+    ok &= test_engines_fetch_one_page_with_stubbed_drivers()
+    ok &= test_gitignore_covers_dumps_and_keeps_shipped_files()
     ok &= test_sample_output()
     ok &= test_x_debug_header_is_redacted()
     ok &= test_scraper_api_sends_waitfor_as_an_object_and_reads_http_code()

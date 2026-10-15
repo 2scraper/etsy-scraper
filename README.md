@@ -6,7 +6,7 @@ blocking, JSON/CSV output and a run-metadata sidecar.
 
 [![release](https://img.shields.io/github/v/release/2scraper/etsy-scraper?sort=semver)](https://github.com/2scraper/etsy-scraper/releases)
 [![tests](https://github.com/2scraper/etsy-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/etsy-scraper/actions/workflows/tests.yml)
-[![canary (on demand)](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml/badge.svg)](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml)
+[![canary](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml/badge.svg)](https://github.com/2scraper/etsy-scraper/actions/workflows/canary.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue?logo=python&logoColor=white)
 ![licence](https://img.shields.io/badge/licence-MIT-green)
 ![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20Puppeteer-blueviolet)
@@ -288,8 +288,10 @@ never touched. Not measured on Etsy yet: how often this fires on real data.
 ### Exit codes
 
 `0` ok · `1` crash · `2` bad usage · `3` blocked · `4` zero products ·
-`5` remote API error (a locked Scraping Browser profile is the common one) ·
-`6` partial
+`5` the content was never obtained (a refused or locked Scraping Browser
+profile, a navigation that never completed, a 404 for the URL itself —
+`stop_reason: not_found` — or a served page that states listings and parsed
+to none — `stop_reason: parser_found_nothing`) · `6` partial
 
 **A run that finds nothing writes nothing** — last night's good output is not
 replaced with `[]`. Pass `--allow-empty` if an empty result is what you want
@@ -433,39 +435,31 @@ All four are separate 2Captcha products behind one key.
 
 `tests.yml` is offline and green means green, on every push.
 
-The **canary** is a real run against etsy.com, and it runs **on demand
-rather than on a schedule** — dispatch it from the Actions tab with a fresh
-`ETSY_CDP_ENDPOINT` secret when the answer matters. The reason is the
-credential: a Scraping Browser endpoint on this account does not survive a
-day, and a daily cron against it would give either a permanently red badge or
-a permanently green one that had tested nothing. The second is worse, because
-green reads as "the parser still works".
+The **canary** is a real 3-page run against etsy.com, weekly and on demand.
+Etsy's DataDome refuses a GitHub runner's datacentre address, so it runs
+through the 2Captcha Scraping Browser API and needs an `ETSY_CDP_ENDPOINT`
+repository secret (use a `pid` reserved for CI: a profile allows one live
+connection).
 
-When it does run, it has to distinguish two things that look the same from
-the outside:
+**Green means the site was reached and parsed, and nothing else does.**
 
-| the run | the badge | why |
-|---|---|---|
-| got in, data is right | green | |
-| got in, **parsed 0 rows** from a search that returns tens of thousands | **red** | the tile anchor moved. This is the regression the canary exists to catch |
-| got in, a column collapsed below its floor | **red** | same reason |
-| crashed, or the workflow's own arguments are wrong | **red** | |
-| **blocked** before parsing (`t=bv`) | green, with a **warning** | access, not code — measured intermittent per profile |
-| the **endpoint refused the connection** | green, with a **warning** | usually an expired secret |
-| no `ETSY_CDP_ENDPOINT` secret at all | green, with a **notice** | nothing to run |
+| the run | the badge |
+|---|---|
+| got in, rows parsed, every data check holds | green |
+| got in, **parsed 0 rows**, or a served page parsed to nothing (`parser_found_nothing`) | **red** — the tile markup moved |
+| got in, a column collapsed below its floor | **red** |
+| **blocked** before parsing (`t=bv`) | **red** — the site was not tested |
+| the endpoint refused the connection, or nothing was obtained | **red** — the log names the cause |
+| partial run | **red** |
+| no `ETSY_CDP_ENDPOINT` secret at all | **red**, naming the missing secret |
 
-The three warning rows also write to the run's step summary in words: *the
-canary did not test anything this time.* That matters — a warning must not
-read as a pass, and a green badge from a blocked run is not evidence the
-parser still works.
-
-**Why not fail on a block?** Because it would be red most days for reasons
-that are nobody's bug. Measured 2026-09-09/10 on one account: a fresh profile
-served three full pages in the morning; that evening two fresh profiles were
-refused through all their retries while a third served a shop front in full,
-twice. Same code, same zone, same URLs. And a credential expires eventually,
-which would pin the badge red until someone noticed. A check that is always
-red teaches everyone to ignore checks.
+A block or a refused endpoint is an access condition rather than a parser
+bug, and the error message says which it was. It is still red: a green badge
+over a run that never reached the site would read as "the parser still
+works" when nothing was tested. Access through one profile was measured
+intermittent on 2026-09-09/10 (a fresh profile served three full pages in
+the morning; that evening two were refused through all their retries), so a
+single red run from a block is worth one re-dispatch before anything else.
 
 ## Comparing two runs
 
