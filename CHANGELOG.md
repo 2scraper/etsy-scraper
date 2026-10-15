@@ -13,6 +13,8 @@ with it, so nobody discovers it from a bill or from a diff.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-15
+
 > **Behaviour changes in this section, read these first:**
 >
 > * **A served listing page that states it holds listings and parses to
@@ -134,8 +136,6 @@ with it, so nobody discovers it from a bill or from a diff.
 
 - `SECURITY.md` said this project has no releases or version tags; it has
   both. "Supported versions" now names the latest release and `main`.
-
-## [0.2.3] — 2026-09-16
 
 ### Added
 
@@ -527,6 +527,7 @@ them is fixed there too or reported:
   the repo. The check was red on exactly the machines most likely to be
   running it.
 
+[0.3.0]: https://github.com/2scraper/etsy-scraper/releases/tag/v0.3.0
 [0.2.2]: https://github.com/2scraper/etsy-scraper/releases/tag/v0.2.2
 [0.2.1]: https://github.com/2scraper/etsy-scraper/releases/tag/v0.2.1
 [0.2.0]: https://github.com/2scraper/etsy-scraper/releases/tag/v0.2.0
