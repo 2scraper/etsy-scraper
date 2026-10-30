@@ -1,4 +1,6 @@
-# etsy-scraper
+# Etsy Scraper — Listings, Prices and Shop Ratings in Python
+
+**Etsy scraper** — an open-source (MIT) Python tool that reads Etsy search results, category listings, shop fronts and listing pages and writes title, price, shop name, shop rating and a sponsored-ad flag to JSON or CSV. Measured on 2026-09-09, Etsy's DataDome refused datacentre addresses outright, and the path that worked was the 2Captcha Scraping Browser API. Use it for price monitoring across a search or a shop, or compare two runs with `diff_runs.py`.
 
 Etsy listing scraper — search results, category listings, shop fronts and
 listing pages — with three interchangeable browser engines, DataDome-aware
@@ -491,6 +493,23 @@ review, not the person.
 `community.etsy.com`, `partners.etsy.com`. Each is refused **with the reason**
 rather than as "not an Etsy site", which would be false and send you looking
 for a typo.
+
+## Guides
+
+- [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
+
+## Related scrapers
+
+Same CLI conventions, same output contract (one row per item, JSON or CSV, a `.meta.json` sidecar and shared exit codes):
+
+- [Farfetch scraper](https://github.com/2scraper/farfetch-scraper) — Luxury fashion listings and per-size product data…
+- [Givenchy Beauty scraper](https://github.com/2scraper/givenchy-scraper) — Products, prices and shades across 11 storefront locales
+- [Home Depot scraper](https://github.com/2scraper/homedepot-scraper) — Per-store prices, stock, brands, models and ratings…
+- [Indiegogo scraper](https://github.com/2scraper/indiegogo-scraper) — Project listings, campaign pages and reward tiers
+- [Kohl's scraper](https://github.com/2scraper/kohls-scraper) — Prices, price ranges, sale and clearance labels, ratings…
+- [Maison KOSÉ scraper](https://github.com/2scraper/kose-scraper) — Kosé's Japanese online store (maison.kose.co.jp)
+
+All scrapers: [github.com/2scraper](https://github.com/2scraper) · Need another site? [Open a request](https://github.com/2scraper/.github/issues/new?title=%5BScraper%20request%5D%20)
 
 ## Licence and scope
 
