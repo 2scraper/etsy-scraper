@@ -13,6 +13,14 @@ with it, so nobody discovers it from a bill or from a diff.
 
 ## [Unreleased]
 
+### Documentation
+
+* The README now states the access requirement per mode and route
+  (search, category, shop front, listing page), with a dated re-check: all
+  four answered a datacentre address with DataDome's `t=bv` refusal on
+  2026-11-05. The comparison with farfetch-scraper is reworded so its
+  "no key and no proxy" result is not read as Etsy's.
+
 ## [0.3.0] — 2026-10-15
 
 > **Behaviour changes in this section, read these first:**

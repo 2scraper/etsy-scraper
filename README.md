@@ -39,13 +39,29 @@ storefront. A second zone honoured it (a Comcast residential address in the
 US). The row's own `url` and `currency` are what tell you which storefront
 answered; do not trust the login string.
 
+**This applies to every mode, not just search.** All four page kinds this
+repo reads sit behind the same DataDome, and none of them answers a datacentre address.
+Re-checked on 2026-11-05 with `curl` and a browser user-agent from a hosting
+(datacentre) address:
+
+| Mode | Route | Datacentre address, no key, no proxy |
+|---|---|---|
+| `listing` | `/search?q=…` | HTTP 403, `t=bv` |
+| `listing` | `/c/…` (category) | HTTP 403, `t=bv` |
+| `shop` | `/shop/<name>` | HTTP 403, `t=bv` |
+| `product` | `/listing/<id>/…` | HTTP 403, `t=bv` |
+
+No route in this repo was served to a client without a paid product in any
+of these measurements; the one that worked for every mode was the Scraping
+Browser API.
+
 Two things follow, and they are the opposite of what most repos in this
 family need:
 
 1. **A local browser on your own address will almost certainly not work.**
-   Unlike [farfetch-scraper](https://github.com/2scraper/farfetch-scraper),
+   This is unlike [farfetch-scraper](https://github.com/2scraper/farfetch-scraper),
    where a plain local Chromium on a clean residential IP returned 96
-   products with no key and no proxy, here even a genuine Chrome was refused
+   products with no key and no proxy. On Etsy, even a genuine Chrome was refused
    from a hosting network — and a headless Chromium was refused from a
    *residential* one. DataDome scores the network first and the browser
    second, and an automated browser fails the second test.
