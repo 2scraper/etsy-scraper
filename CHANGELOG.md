@@ -13,6 +13,10 @@ with it, so nobody discovers it from a bill or from a diff.
 
 ## [Unreleased]
 
+### Changed
+
+- CI only: the scheduled canary now starts at 06:47 UTC (Mondays) instead of 06:23, so canaries that share one Scraping Browser profile no longer start at the same time and lock each other out.
+
 ### Documentation
 
 * The README now states the access requirement per mode and route

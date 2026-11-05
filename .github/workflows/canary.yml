@@ -47,7 +47,7 @@ name: canary
 on:
   workflow_dispatch:
   schedule:
-    - cron: "23 6 * * 1"
+    - cron: "47 6 * * 1"
 
 jobs:
   live-run:
